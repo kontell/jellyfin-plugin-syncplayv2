@@ -1,7 +1,7 @@
 name: "SyncPlay v2"
 guid: "181f9934-bf71-4941-974e-a5f2cdcccc4e"
 # Tracks the Jellyfin ABI it is built against: <server major.minor>.0.<build>.
-version: "10.11.0.1"
+version: "10.11.0.2"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "kontell"
@@ -11,6 +11,12 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.SyncPlayV2.dll"
 changelog: |-
+  - Hot join: a v2 member joining a Playing group no longer pauses anyone.
+    The group keeps playing, the joiner is pushed a snapshot, loads at the
+    live position and rendezvouses via a private scheduled Unpause - with
+    the updated kofin client it arrives with initial-start tightness. v1
+    joiners (web) keep the classic barrier. Config: HotJoin (default on).
+    Conformance: 17/17 fast suite including the new hot_join scenario.
   - M1: the full protocol v2 engine (vendored from integration/syncplay-phase1):
     versioned state, snapshots, position beacons, ping-scaled tolerances,
     buffering grace, group-wait deadline, 90s disconnect grace with

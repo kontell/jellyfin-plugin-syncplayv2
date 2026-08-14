@@ -38,6 +38,18 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
         /// <inheritdoc />
         public override void SessionJoined(IGroupStateContext context, GroupStateType prevState, SessionInfo session, CancellationToken cancellationToken)
         {
+            // Hot join: a v2 member catches the running playback without
+            // pausing anyone — flagged as not-waited-on, it rendezvouses via
+            // a private scheduled Unpause when it reports Ready. v1 members
+            // get the classic barrier below: the whole group waits for them.
+            if (context is IGroupStateContextV2 v2
+                && v2.IsV2Member(session.Id)
+                && SyncPlayV2Plugin.Instance?.Configuration.HotJoin != false)
+            {
+                v2.BeginHotJoin(session, cancellationToken);
+                return;
+            }
+
             // Wait for session to be ready.
             var waitingState = new WaitingGroupState(LoggerFactory);
             context.SetState(waitingState);
@@ -122,6 +134,14 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 return;
             }
 
+            if (context is IGroupStateContextV2 v2 && v2.IsHotJoining(session.Id))
+            {
+                // A hot-joining member's stalls are its own; the group keeps
+                // playing and the member re-reports Ready when it recovers.
+                context.SetBuffering(session, true);
+                return;
+            }
+
             // Change state.
             var waitingState = new WaitingGroupState(LoggerFactory);
             context.SetState(waitingState);
@@ -131,6 +151,12 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
         /// <inheritdoc />
         public override void HandleRequest(ReadyGroupRequest request, IGroupStateContext context, GroupStateType prevState, SessionInfo session, CancellationToken cancellationToken)
         {
+            if (context is IGroupStateContextV2 v2 && v2.IsHotJoining(session.Id))
+            {
+                v2.CompleteHotJoin(session, cancellationToken);
+                return;
+            }
+
             if (prevState.Equals(Type))
             {
                 // Group was not waiting, make sure client has latest state.

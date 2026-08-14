@@ -98,5 +98,13 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// </summary>
         /// <value>The time at which the member disconnected.</value>
         public DateTime DisconnectedSince { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether the member is catching a
+        /// running playback (hot join): the group does not pause or wait for
+        /// it, and its Ready is answered with a private scheduled Unpause.
+        /// </summary>
+        /// <value><c>true</c> while the member is hot-joining.</value>
+        public bool HotJoining { get; set; }
     }
 }

@@ -5,8 +5,8 @@
     <Nullable>enable</Nullable>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <!-- Tracks the Jellyfin ABI it is built against, kofinsyncqueue convention. -->
-    <AssemblyVersion>10.11.0.1</AssemblyVersion>
-    <FileVersion>10.11.0.1</FileVersion>
+    <AssemblyVersion>10.11.0.2</AssemblyVersion>
+    <FileVersion>10.11.0.2</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

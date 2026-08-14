@@ -18,6 +18,30 @@ public interface IGroupStateContextV2 : IGroupStateContext
     /// clamp(2 x ping, 500, 2000).
     /// </summary>
     long GetMemberPlaybackOffset(SessionInfo session);
+
+    /// <summary>
+    /// Whether the member negotiated protocol v2.
+    /// </summary>
+    bool IsV2Member(string sessionId);
+
+    /// <summary>
+    /// Whether the member is currently catching a running playback (hot join).
+    /// </summary>
+    bool IsHotJoining(string sessionId);
+
+    /// <summary>
+    /// Admits a v2 member into a Playing group without pausing anyone: the
+    /// member is flagged as not-waited-on and pushed a state snapshot to
+    /// rendezvous from.
+    /// </summary>
+    void BeginHotJoin(SessionInfo session, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Completes a hot join on the member's Ready: clears its flags and sends
+    /// it a private scheduled Unpause at the position the group will occupy
+    /// at that instant.
+    /// </summary>
+    void CompleteHotJoin(SessionInfo session, CancellationToken cancellationToken);
 }
 
 /// <summary>

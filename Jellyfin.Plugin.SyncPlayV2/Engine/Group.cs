@@ -442,6 +442,72 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         public bool IsV2Member(string sessionId)
             => _participants.TryGetValue(sessionId, out GroupMember member) && member.ProtocolVersion >= 2;
 
+        /// <inheritdoc />
+        public bool IsHotJoining(string sessionId)
+            => _participants.TryGetValue(sessionId, out GroupMember member) && member.HotJoining;
+
+        /// <inheritdoc />
+        public void BeginHotJoin(SessionInfo session, CancellationToken cancellationToken)
+        {
+            if (!_participants.TryGetValue(session.Id, out GroupMember member))
+            {
+                return;
+            }
+
+            // The group must not wait on a member that is still catching the
+            // running playback; its own reports clear these flags.
+            member.HotJoining = true;
+            member.IsBuffering = true;
+            member.IgnoreGroupWait = true;
+            member.IgnoredByTimeout = true;
+            BumpStateVersion();
+
+            // Everything the joiner needs to rendezvous: the complete state,
+            // with position-at-time to extrapolate the running playback from.
+            SendWireUpdate(session, "StateSnapshot", GetSnapshot(), cancellationToken);
+
+            _logger.LogInformation(
+                "Session {SessionId} hot-joining group {GroupId}: playback continues for everyone else.",
+                session.Id,
+                GroupId.ToString());
+        }
+
+        /// <inheritdoc />
+        public void CompleteHotJoin(SessionInfo session, CancellationToken cancellationToken)
+        {
+            if (!_participants.TryGetValue(session.Id, out GroupMember member) || !member.HotJoining)
+            {
+                return;
+            }
+
+            member.HotJoining = false;
+            SetBuffering(session, false);
+            BumpStateVersion();
+
+            // The rendezvous: a private scheduled start at the position the
+            // group will occupy at that instant — the same mechanism as a
+            // group start, so the joiner arrives with start-grade tightness.
+            var now = DateTime.UtcNow;
+            var lead = TimeSpan.FromMilliseconds(Math.Max(2 * member.Ping, DefaultPing));
+            var when = now + lead;
+            var positionTicks = PositionTicks + Math.Max((when - LastActivity).Ticks, 0);
+            var command = new SendCommand(
+                GroupId,
+                PlayQueue.GetPlayingItemPlaylistId(),
+                when,
+                SendCommandType.Unpause,
+                positionTicks,
+                now);
+            SendCommand(session, SyncPlayBroadcastType.CurrentSession, command, cancellationToken);
+
+            _logger.LogInformation(
+                "Session {SessionId} rendezvous in group {GroupId}: Unpause at {PositionTicks} ticks, lead {Lead}ms.",
+                session.Id,
+                GroupId.ToString(),
+                positionTicks,
+                (int)lead.TotalMilliseconds);
+        }
+
         /// <summary>
         /// Sends a plugin-wire group update (open Type string, StateVersion stamped)
         /// to a single session. Delivery faults are logged by the sender.
@@ -741,6 +807,17 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             _logger.LogInformation("Group {GroupId} switching from {FromStateType} to {ToStateType}.", GroupId.ToString(), _state.Type, state.Type);
             this._state = state;
             BumpStateVersion();
+
+            if (!state.Type.Equals(GroupStateType.Playing))
+            {
+                // Leaving Playing ends any in-flight hot joins: those members
+                // take part in the new choreography like everyone else (their
+                // not-waited-on flags clear on their next report as usual).
+                foreach (var member in _participants.Values)
+                {
+                    member.HotJoining = false;
+                }
+            }
         }
 
         /// <inheritdoc />
