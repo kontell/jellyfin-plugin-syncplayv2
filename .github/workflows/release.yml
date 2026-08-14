@@ -1,0 +1,148 @@
+# Tag release: build, test, package the Jellyfin-installable zip, and draft a
+# GitHub release whose body is build.yaml's changelog block. Mirrors
+# jellyfin-plugin-kofinsyncqueue's release.yml — same three-job shape, same
+# draft-not-publish stance.
+#
+# Draft, deliberately. Publishing is what repository.kontell reacts to
+# (notify-repo.yml), so a release stays a draft until a human has looked at the
+# zip. See that repo's docs/publishing.md.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Skip release creation — run checks and build only"
+        type: boolean
+        default: false
+
+# Least privilege by default: check/package only read. The release job alone
+# needs write to create the draft.
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: "9.0.x"
+  PLUGIN_NAME: SyncPlay v2
+
+jobs:
+  check:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Run tests
+        run: dotnet test -c Release --nologo
+
+  package:
+    name: package
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Build zip
+        run: tools/package.sh dist
+        env:
+          DOTNET: dotnet
+
+      # The csproj is the single source of version truth: tools/package.sh reads
+      # AssemblyVersion to name the zip, and the zip's own name is what
+      # repository.kontell serves and what its asset_glob matches. A tag that
+      # disagrees would publish an asset nobody asked for.
+      - name: Assert tag matches AssemblyVersion
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/.*<AssemblyVersion>\(.*\)<\/AssemblyVersion>.*/\1/p' \
+            Jellyfin.Plugin.SyncPlayV2/Jellyfin.Plugin.SyncPlayV2.csproj)"
+          tag="${GITHUB_REF_NAME#v}"
+          echo "AssemblyVersion=$version  tag=$tag"
+          if [[ "$tag" != "$version" ]]; then
+            echo "tag v$tag does not match AssemblyVersion $version" >&2
+            exit 1
+          fi
+
+      # repository.kontell finds this release by asset_glob "syncplay-v2_*.zip"
+      # (addons.toml) and rejects a zip with no meta.json at its root. Both are
+      # cheaper to catch here than in the publish run of another repository.
+      - name: Assert the zip is one repository.kontell will accept
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip="$(ls dist/syncplay-v2_*.zip)"
+          echo "asset: $zip"
+          unzip -l "$zip" | grep -q ' meta.json$' \
+            || { echo "zip has no meta.json at its root" >&2; exit 1; }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: syncplay-v2-release-zip
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: release
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # draft GitHub release + asset upload
+    if: |
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run != 'true')
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download zip
+        uses: actions/download-artifact@v4
+        with:
+          name: syncplay-v2-release-zip
+          path: dist
+
+      - name: Get version and changelog
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/.*<AssemblyVersion>\(.*\)<\/AssemblyVersion>.*/\1/p' \
+            Jellyfin.Plugin.SyncPlayV2/Jellyfin.Plugin.SyncPlayV2.csproj)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          fi
+          # build.yaml's changelog block, the same text tools/package.sh puts in
+          # meta.json and repository.kontell surfaces in manifest.json. One
+          # source, so the release notes and the plugin catalogue cannot drift.
+          changes="$(awk '
+            /^changelog:[[:space:]]*\|-?[[:space:]]*$/ { flag = 1; next }
+            flag && /^[^[:space:]]/ { exit }
+            flag { sub(/^  /, ""); print }
+          ' build.yaml)"
+          EOF="$(dd if=/dev/urandom bs=15 count=1 status=none | base64)"
+          {
+            echo "changes<<$EOF"
+            echo "$changes"
+            echo "$EOF"
+          } >> "$GITHUB_OUTPUT"
+          ls -la dist/
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ env.PLUGIN_NAME }} ${{ steps.meta.outputs.tag }}
+          body: ${{ steps.meta.outputs.changes }}
+          draft: true
+          files: dist/*.zip
