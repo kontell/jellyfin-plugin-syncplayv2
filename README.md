@@ -1,38 +1,17 @@
 # Jellyfin SyncPlay v2 plugin
 
-SyncPlay protocol v2 served from a server plugin: versioned state, on-demand
-snapshots, position beacons, ping-scaled position tolerances, buffering grace,
-bounded group-waits, and a 90-second disconnect grace with per-version resync —
-serving stock v1 clients (jellyfin-web, unmodified) and v2 clients from **one
-group registry** on an unpatched Jellyfin 10.11 server.
+SyncPlay protocol v2 served from a server plugin: versioned state, on-demand snapshots, position beacons, ping-scaled position tolerances, buffering grace, bounded group-waits, and a 90-second disconnect grace with per-version resync - serving stock v1 clients (jellyfin-web, unmodified) and v2 clients from one group registry on an unpatched Jellyfin 10.11 server.
 
-While the plugin is enabled it replaces the built-in SyncPlay (it shadows the
-core `ISyncPlayManager`); disable it and stock SyncPlay returns. Even plain v1
-clients gain the robustness fixes: a member that stalls no longer freezes the
-group forever, short rebuffers no longer pause everyone, and a dropped
-connection no longer means an instant kick.
+While the plugin is enabled it replaces the built-in SyncPlay (it shadows the core `ISyncPlayManager`); disable it and stock SyncPlay returns. Even plain v1 clients gain the robustness fixes: a member that stalls no longer freezes the group forever, short rebuffers no longer pause everyone, and a dropped connection no longer means an instant kick.
 
-The protocol is specified in the `kontell/jellyfin` fork's
-[`docs/SYNCPLAY.md`](https://github.com/kontell/jellyfin/blob/docs/syncplay-protocol/docs/SYNCPLAY.md)
-(this plugin is its "plugin binding": negotiation also works body-transparently
-on the stock `Join`/`New` routes, `POST /SyncPlay/Hello` is the capability
-probe, and the WebSocket time-sync exchange lives on a dedicated socket at
-`/SyncPlay/TimeSync` because a plugin cannot answer `TimeSync` on `/socket`).
-Conformance: the full [syncplay-conformance](https://github.com/kontell/syncplay-conformance)
-suite — 14/14 scenarios, the same score as the patched-server build.
+The protocol is specified in the [syncplay-conformance](https://github.com/kontell/syncplay-conformance) repo.
 
 ## Install
 
-From the [Kontell repository](https://github.com/kontell/repository.kontell)
-(Dashboard → Plugins → Repositories), or manually:
+Add the Kontell plugin repository, then install from the catalog - Jellyfin unpacks the plugin into the right place (with the right ownership) itself:
 
-```
-sudo tools/install.sh syncplay-v2_<version>.zip --restart
-```
-
-Requires Jellyfin 10.11.x. The engine logs `[SyncPlayV2] engine active` at
-startup — if it logs `DI SHADOW FAILED` instead, the server build changed
-service registration and the plugin is inactive (stock SyncPlay still works).
+1.  Dashboard -> Plugins -> Manange Repositoires -> New Repository: https://repository.kontell.workers.dev/jellyfin/manifest.json
+2.  Dashboard -> Plugins -> Install SyncPlay v2, then restart the server (more reliable to do this from systemd rather than the dashboard).
 
 ## Layout
 
