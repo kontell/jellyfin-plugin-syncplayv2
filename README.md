@@ -4,7 +4,7 @@ SyncPlay protocol v2 served from a server plugin: versioned state, on-demand sna
 
 While the plugin is enabled it replaces the built-in SyncPlay (it shadows the core `ISyncPlayManager`); disable it and stock SyncPlay returns. Even plain v1 clients gain the robustness fixes: a member that stalls no longer freezes the group forever, short rebuffers no longer pause everyone, and a dropped connection no longer means an instant kick.
 
-The protocol is specified in the [syncplay-conformance](https://github.com/kontell/syncplay-conformance) repo.
+The protocol is specified in [`docs/SYNCPLAY.md`](https://github.com/kontell/syncplay-conformance/blob/master/docs/SYNCPLAY.md) in the [syncplay-conformance](https://github.com/kontell/syncplay-conformance) repo. This plugin is the spec's "plugin binding": `POST /SyncPlay/Hello` (§2.1), the dedicated time-sync socket (§3.1), and hot join (§7.1), which no other server implements.
 
 ## Install
 
