@@ -1,9 +1,9 @@
 name: "SyncPlay v2"
 guid: "181f9934-bf71-4941-974e-a5f2cdcccc4e"
 # Tracks the Jellyfin ABI it is built against: <server major.minor>.0.<build>.
-version: "10.11.0.2"
-targetAbi: "10.11.0.0"
-framework: "net9.0"
+version: "12.0.0.2"
+targetAbi: "12.0.0.0"
+framework: "net10.0"
 owner: "kontell"
 overview: "SyncPlay protocol v2 served from a plugin"
 description: "SyncPlay protocol v2: versioned state, snapshots, position beacons, adaptive tolerances, bounded group-waits and robust reconnects — serving stock v1 clients and v2 clients from one group registry, replacing the built-in SyncPlay while installed."
