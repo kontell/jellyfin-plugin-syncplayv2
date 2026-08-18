@@ -1,21 +1,31 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!-- One source tree, several Jellyfin ABIs. Everything that differs between
+       them is a property with a default here, overridden per row by the
+       release matrix (.github/workflows/release.yml). Building with no
+       overrides gives the primary row, which is what a local build wants. -->
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <JellyfinVersion Condition="'$(JellyfinVersion)' == ''">10.11.0</JellyfinVersion>
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net9.0</TargetFramework>
+    <!-- Tracks the Jellyfin ABI it is built against, kofinsyncqueue convention:
+         <server major.minor>.0.<build>. The prefix is what makes a v12 server
+         rank the v12 zip above the 10.11 one, since Jellyfin treats targetAbi
+         as a floor and will otherwise happily offer the older build
+         (jellyfin#11331, closed Not A Bug). -->
+    <PluginVersion Condition="'$(PluginVersion)' == ''">10.11.0.2</PluginVersion>
     <Nullable>enable</Nullable>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
-    <!-- Tracks the Jellyfin ABI it is built against, kofinsyncqueue convention. -->
-    <AssemblyVersion>10.11.0.2</AssemblyVersion>
-    <FileVersion>10.11.0.2</FileVersion>
+    <AssemblyVersion>$(PluginVersion)</AssemblyVersion>
+    <FileVersion>$(PluginVersion)</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Pin to the OLDEST supported 10.11 patch: .NET binds an assembly
-         reference upward but never downward, so building against 10.11.11
-         produces a plugin that a 10.11.7 server refuses to load (verified in
-         the M0 spike). -->
-    <PackageReference Include="Jellyfin.Controller" Version="[10.11.0]" />
-    <PackageReference Include="Jellyfin.Data" Version="[10.11.0]" />
+    <!-- Pin to the OLDEST supported patch of the row's server line: .NET binds
+         an assembly reference upward but never downward, so building against
+         10.11.11 produces a plugin that a 10.11.7 server refuses to load
+         (verified in the M0 spike). -->
+    <PackageReference Include="Jellyfin.Controller" Version="[$(JellyfinVersion)]" />
+    <PackageReference Include="Jellyfin.Data" Version="[$(JellyfinVersion)]" />
     <!-- Compile-time only: the server ships Swashbuckle 6.2.3 (Directory.Packages.props
          @ release-10.11.z); shipping our own copy would shadow it in the plugin ALC. -->
     <PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="6.2.3" ExcludeAssets="runtime" />

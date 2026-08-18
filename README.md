@@ -27,10 +27,36 @@ Add the Kontell plugin repository, then install from the catalog - Jellyfin unpa
 
 ## Releasing
 
-Tag `v<AssemblyVersion>` → CI tests, packages and drafts a GitHub release;
-publishing the draft is a human act, after which
+One source tree ships to several Jellyfin server lines. Jellyfin serves a single
+`manifest.json` in which every entry carries its own `targetAbi` and the server
+picks the highest one it can run, so supporting 10.11 and 12 is a **build
+matrix, not a branch pair** — the only difference between them is the target
+framework, the `Jellyfin.Controller` pin and the version prefix. The supported
+rows live in one place, the `abis` job of
+[`release.yml`](.github/workflows/release.yml).
+
+Tag `v<PluginVersion>` — the *primary* row's version, the one `build.yaml`
+documents — and CI tests, packages and drafts a single GitHub release carrying
+one zip per row: `syncplay-v2_10.11.0.N.zip`, `syncplay-v2_12.0.0.N.zip`. The
+build number `N` is shared, because a v12 server that can see both must rank the
+v12 zip higher; Jellyfin treats `targetAbi` as a floor and will otherwise offer
+the older build ([jellyfin#11331](https://github.com/jellyfin/jellyfin/issues/11331),
+closed *Not A Bug*).
+
+A row built against a Jellyfin prerelease is marked `preview` and may fail
+without holding up the rest; the release step says which rows made it in.
+
+Publishing the draft is a human act, after which
 [repository.kontell](https://github.com/kontell/repository.kontell) picks it up
 (dispatch or its scheduled reconcile) and serves it in `jellyfin/manifest.json`.
+
+To build one row locally:
+
+```sh
+tools/package.sh dist                      # the primary row
+ABI_BASE=12.0.0 TARGET_ABI=12.0.0.0 \
+  FRAMEWORK=net10.0 JELLYFIN_VERSION=12.0.0-rc5 tools/package.sh dist
+```
 
 ## License
 
