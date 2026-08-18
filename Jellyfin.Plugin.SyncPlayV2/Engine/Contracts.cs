@@ -60,7 +60,10 @@ public interface IGroupStateContextV2 : IGroupStateContext
     /// pushed a state snapshot to reload from, and its next Ready is answered
     /// with a private scheduled Unpause at the live position.
     /// </summary>
-    void RendezvousMember(SessionInfo session, CancellationToken cancellationToken);
+    /// <param name="session">The member to rendezvous.</param>
+    /// <param name="reason">Why the group gave up waiting, for the log.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    void RendezvousMember(SessionInfo session, string reason, CancellationToken cancellationToken);
 }
 
 /// <summary>

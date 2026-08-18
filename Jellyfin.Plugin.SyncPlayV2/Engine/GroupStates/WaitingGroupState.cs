@@ -482,7 +482,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     // is given a private scheduled start at the live position.
                     if (context is IGroupStateContextV2 v2 && v2.ShouldRendezvous(session, delayTicks))
                     {
-                        v2.RendezvousMember(session, cancellationToken);
+                        v2.RendezvousMember(session, "corrections are not closing the gap", cancellationToken);
                         SendGroupStateUpdate(context, request, session, cancellationToken);
                         ResumeIfNobodyElseIsWaiting(context, currentTime, session, cancellationToken);
                         return;
