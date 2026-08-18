@@ -10,10 +10,27 @@ proj="$repo/Jellyfin.Plugin.SyncPlayV2/Jellyfin.Plugin.SyncPlayV2.csproj"
 stage="$repo/artifacts/publish"
 dotnet="${DOTNET:-$HOME/.dotnet/dotnet}"
 
-version="$(sed -n 's/.*<AssemblyVersion>\(.*\)<\/AssemblyVersion>.*/\1/p' "$proj")"
+# The ABI row being packaged. Unset means the primary row, so a bare run of
+# this script is exactly what it always was; the release matrix sets all four
+# to build the same source against another Jellyfin line.
+#
+#   ABI_BASE          version prefix, e.g. 12.0.0    (default: from PluginVersion)
+#   TARGET_ABI        minimum server, e.g. 12.0.0.0  (default: from build.yaml)
+#   FRAMEWORK         e.g. net10.0                   (default: the csproj's)
+#   JELLYFIN_VERSION  package pin, e.g. 12.0.0-rc5   (default: the csproj's)
+plugin_version="$(sed -n 's/.*<PluginVersion[^>]*>\(.*\)<\/PluginVersion>.*/\1/p' "$proj")"
+build_number="${plugin_version##*.}"
+
+if [ -n "${ABI_BASE:-}" ]; then
+    # One build number across every row: <abi base>.<build>.
+    version="$ABI_BASE.$build_number"
+else
+    version="$plugin_version"
+fi
+
 guid="$(sed -n 's/^guid: *"\(.*\)"/\1/p' "$repo/build.yaml")"
 name="$(sed -n 's/^name: *"\(.*\)"/\1/p' "$repo/build.yaml")"
-target_abi="$(sed -n 's/^targetAbi: *"\(.*\)"/\1/p' "$repo/build.yaml")"
+target_abi="${TARGET_ABI:-$(sed -n 's/^targetAbi: *"\(.*\)"/\1/p' "$repo/build.yaml")}"
 owner="$(sed -n 's/^owner: *"\(.*\)"/\1/p' "$repo/build.yaml")"
 overview="$(sed -n 's/^overview: *"\(.*\)"/\1/p' "$repo/build.yaml")"
 description="$(sed -n 's/^description: *"\(.*\)"/\1/p' "$repo/build.yaml")"
@@ -26,7 +43,12 @@ changelog="$(awk '
     | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' \
     | awk 'NR > 1 { printf "\\n" } { printf "%s", $0 }')"
 
-"$dotnet" publish "$proj" -c Release -o "$stage"
+build_args=(-c Release -o "$stage" -p:PluginVersion="$version")
+[ -n "${FRAMEWORK:-}" ] && build_args+=(-p:JellyfinFramework="$FRAMEWORK")
+[ -n "${JELLYFIN_VERSION:-}" ] && build_args+=(-p:JellyfinVersion="$JELLYFIN_VERSION")
+
+echo "packaging $name $version (targetAbi $target_abi${FRAMEWORK:+, $FRAMEWORK})"
+"$dotnet" publish "$proj" "${build_args[@]}"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

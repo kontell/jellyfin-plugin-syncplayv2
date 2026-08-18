@@ -1,6 +1,19 @@
 name: "SyncPlay v2"
 guid: "181f9934-bf71-4941-974e-a5f2cdcccc4e"
-# Tracks the Jellyfin ABI it is built against: <server major.minor>.0.<build>.
+# The PRIMARY ABI row. One source tree is built against several Jellyfin ABIs
+# (.github/workflows/release.yml holds the matrix); these three describe the
+# lowest one, and are what a bare `tools/package.sh` produces. Every other row
+# overrides them through the environment.
+#
+# version tracks the Jellyfin ABI it is built against: <server major.minor>.0.<build>.
+# The <build> component is shared by every row, so the same source ships as
+# 10.11.0.2 and 12.0.0.2 — and a v12 server ranks the v12 zip highest, which is
+# the only thing stopping it installing the 10.11 one (Jellyfin treats targetAbi
+# as a floor: jellyfin#11331, closed Not A Bug).
+#
+# The build number itself lives in the csproj's PluginVersion, which is what
+# tools/package.sh reads; the value here is documentation and is asserted
+# against it at release time.
 version: "10.11.0.2"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
