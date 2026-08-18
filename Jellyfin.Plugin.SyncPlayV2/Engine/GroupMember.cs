@@ -106,5 +106,21 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// </summary>
         /// <value><c>true</c> while the member is hot-joining.</value>
         public bool HotJoining { get; set; }
+
+        /// <summary>
+        /// Gets or sets how many position corrections in a row the group has
+        /// sent this member without it arriving. Reset the moment it reports
+        /// ready.
+        /// </summary>
+        /// <value>The number of consecutive uncorrected attempts.</value>
+        public int CorrectionAttempts { get; set; }
+
+        /// <summary>
+        /// Gets or sets how far out of position the member was at the previous
+        /// correction, so the next one can tell "still moving" from "as close
+        /// as a seek will ever get it".
+        /// </summary>
+        /// <value>The previous correction's delay, in ticks.</value>
+        public long LastCorrectionDelayTicks { get; set; }
     }
 }

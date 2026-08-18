@@ -473,6 +473,46 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         }
 
         /// <inheritdoc />
+        public bool ShouldRendezvous(SessionInfo session, long delayTicks)
+        {
+            if (!_participants.TryGetValue(session.Id, out GroupMember member))
+            {
+                return false;
+            }
+
+            var previous = member.LastCorrectionDelayTicks;
+            var attempts = ++member.CorrectionAttempts;
+            member.LastCorrectionDelayTicks = delayTicks;
+
+            return CorrectionPolicy.CannotConverge(attempts, previous, delayTicks);
+        }
+
+        /// <inheritdoc />
+        public void RendezvousMember(SessionInfo session, CancellationToken cancellationToken)
+        {
+            if (!_participants.TryGetValue(session.Id, out GroupMember member))
+            {
+                return;
+            }
+
+            member.CorrectionAttempts = 0;
+            member.LastCorrectionDelayTicks = 0;
+
+            _logger.LogInformation(
+                "Session {SessionId} cannot seek into position in group {GroupId}; rendezvousing instead.",
+                session.Id,
+                GroupId.ToString());
+
+            // Everything from here is the ordinary hot join: BeginHotJoin stops
+            // the group waiting and pushes a snapshot to reload from, and the
+            // member's next Ready is answered by CompleteHotJoin with a private
+            // scheduled Unpause. Nothing here is rendezvous-specific, which is
+            // the point — a member that cannot catch up by seeking is in
+            // exactly the position of one that has just walked in.
+            BeginHotJoin(session, cancellationToken);
+        }
+
+        /// <inheritdoc />
         public void CompleteHotJoin(SessionInfo session, CancellationToken cancellationToken)
         {
             if (!_participants.TryGetValue(session.Id, out GroupMember member) || !member.HotJoining)
@@ -952,6 +992,14 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (_participants.TryGetValue(session.Id, out GroupMember value))
             {
                 SetMemberBuffering(value, isBuffering);
+
+                if (!isBuffering)
+                {
+                    // It arrived: the next member to fall behind starts its own
+                    // correction sequence from scratch.
+                    value.CorrectionAttempts = 0;
+                    value.LastCorrectionDelayTicks = 0;
+                }
 
                 if (!isBuffering && value.IgnoredByTimeout)
                 {

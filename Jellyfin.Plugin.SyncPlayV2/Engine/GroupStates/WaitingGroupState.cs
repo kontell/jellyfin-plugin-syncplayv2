@@ -332,6 +332,15 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 InitialStateSet = true;
             }
 
+            // A hot-joining member's stalls are its own: the group is not waiting
+            // on it, so record the stall and leave everyone else alone. Its
+            // recovery Ready is what completes the rendezvous.
+            if (context is IGroupStateContextV2 bufferContext && bufferContext.IsHotJoining(session.Id))
+            {
+                context.SetBuffering(session, true);
+                return;
+            }
+
             // Make sure the client is playing the correct item.
             if (!request.PlaylistItemId.Equals(context.PlayQueue.GetPlayingItemPlaylistId()))
             {
@@ -419,6 +428,16 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 return;
             }
 
+            // A hot-joining member — whether it walked in or was rendezvoused out
+            // of a correction it could not satisfy — is answered with its
+            // private scheduled Unpause and nothing else. The group is not
+            // waiting on it, so none of the position arithmetic below applies.
+            if (context is IGroupStateContextV2 hotJoinContext && hotJoinContext.IsHotJoining(session.Id))
+            {
+                hotJoinContext.CompleteHotJoin(session, cancellationToken);
+                return;
+            }
+
             // Compute elapsed time between the client reported time and now.
             // Elapsed time is used to estimate the client position when playback is unpaused.
             // Ideally, the request is received and handled without major delays.
@@ -453,6 +472,22 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 // it has no clue of the real position nor the playback state.
                 if (!request.IsPlaying && Math.Abs(delayTicks) > maxPlaybackOffsetTicks)
                 {
+                    // A member whose corrections are not closing the gap cannot
+                    // seek accurately — a transcoded stream lands on a segment
+                    // boundary, not where it was asked — so correcting it again
+                    // holds the whole group in Waiting to no purpose. Measured:
+                    // four rounds and ~13s of group stall, then it played on
+                    // permanently adrift anyway. Hand it to the hot-join path
+                    // instead: the group carries on, and the member reloads and
+                    // is given a private scheduled start at the live position.
+                    if (context is IGroupStateContextV2 v2 && v2.ShouldRendezvous(session, delayTicks))
+                    {
+                        v2.RendezvousMember(session, cancellationToken);
+                        SendGroupStateUpdate(context, request, session, cancellationToken);
+                        ResumeIfNobodyElseIsWaiting(context, currentTime, session, cancellationToken);
+                        return;
+                    }
+
                     // Session not ready at all.
                     context.SetBuffering(session, true);
 
@@ -559,6 +594,48 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Lets the group carry on once a member has been rendezvoused.
+        ///
+        /// The rendezvoused member no longer counts towards the wait
+        /// (BeginHotJoin sets IgnoreGroupWait, which IsBuffering honours), so
+        /// if it was the only thing holding the group up, the group has to be
+        /// released explicitly — nothing else will do it, and the whole point
+        /// of rendezvousing was to stop waiting.
+        ///
+        /// The rendezvoused member is excluded from this Unpause. It gets its
+        /// own, scheduled at the position the group will actually be at when it
+        /// is ready, which is the part a shared command cannot express.
+        /// </summary>
+        private void ResumeIfNobodyElseIsWaiting(IGroupStateContext context, DateTime currentTime, SessionInfo session, CancellationToken cancellationToken)
+        {
+            if (context.IsBuffering())
+            {
+                // Somebody else is still catching up; stay in Waiting for them.
+                return;
+            }
+
+            // Both sides in ticks. The existing recovery branch below compares
+            // a tick count against DefaultPing's raw 500 — which is 0.05ms, not
+            // 500ms — so it is copied deliberately-not: left alone there, but
+            // not reproduced here.
+            var delayTicks = Math.Max(
+                context.GetHighestPing() * 2 * TimeSpan.TicksPerMillisecond,
+                context.DefaultPing * TimeSpan.TicksPerMillisecond);
+            context.LastActivity = currentTime.AddTicks(delayTicks);
+
+            var command = context.NewSyncPlayCommand(SendCommandType.Unpause);
+            context.SendCommand(session, SyncPlayBroadcastType.AllExceptCurrentSession, command, cancellationToken);
+
+            var playingState = new PlayingGroupState(LoggerFactory);
+            context.SetState(playingState);
+
+            _logger.LogInformation(
+                "Group {GroupId} resuming without session {SessionId}, which is rendezvousing.",
+                context.GroupId.ToString(),
+                session.Id);
         }
 
         /// <inheritdoc />

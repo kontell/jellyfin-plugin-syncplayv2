@@ -42,6 +42,25 @@ public interface IGroupStateContextV2 : IGroupStateContext
     /// at that instant.
     /// </summary>
     void CompleteHotJoin(SessionInfo session, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records a position correction just sent to a member and answers whether
+    /// correcting it again is pointless: a member whose delay is not closing is
+    /// one whose transport cannot seek accurately, and seeking it again holds
+    /// the whole group in Waiting for nothing.
+    /// </summary>
+    /// <param name="session">The member being corrected.</param>
+    /// <param name="delayTicks">How far out of position it just reported.</param>
+    /// <returns>true when the member should be rendezvoused instead.</returns>
+    bool ShouldRendezvous(SessionInfo session, long delayTicks);
+
+    /// <summary>
+    /// Hands a member that cannot seek its way into position to the hot-join
+    /// path: the group stops waiting on it and carries on, the member is
+    /// pushed a state snapshot to reload from, and its next Ready is answered
+    /// with a private scheduled Unpause at the live position.
+    /// </summary>
+    void RendezvousMember(SessionInfo session, CancellationToken cancellationToken);
 }
 
 /// <summary>
