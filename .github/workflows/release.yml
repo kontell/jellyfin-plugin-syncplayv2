@@ -6,8 +6,8 @@
 # One source tree, several server lines. Jellyfin serves one manifest.json in
 # which each entry carries its own targetAbi and the server self-selects, so
 # supporting 10.11 and 12 is a build matrix rather than a branch pair — the
-# whole divergence is TargetFramework, the package pin and the version prefix.
-# The `abis` job below is the single place that list lives.
+# whole divergence is the target framework, the package pin and the version
+# prefix. The row list lives in abis.yml, shared with ci.yml.
 #
 # Draft, deliberately. Publishing is what repository.kontell reacts to
 # (notify-repo.yml), so a release stays a draft until a human has looked at the
@@ -33,35 +33,11 @@ env:
   PLUGIN_NAME: SyncPlay v2
 
 jobs:
-  # The supported ABIs, in one place, consumed by both matrixed jobs. A second
-  # copy in each job would drift, which is the failure this whole change exists
-  # to remove.
-  #
-  #   primary  the row the tag names and the one build.yaml documents. Exactly
-  #            one row may be primary.
-  #   preview  built against a Jellyfin prerelease, so it may fail for reasons
-  #            that are not ours; it must not hold up the release of the others.
+  # The supported ABIs, from the one place they are defined; ci.yml calls the
+  # same workflow, so the gate and the release can never disagree about which
+  # server lines are built.
   abis:
-    name: abis
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.rows.outputs.matrix }}
-    steps:
-      - id: rows
-        shell: bash
-        run: |
-          set -euo pipefail
-          rows='[
-            {"abi":"10.11","base":"10.11.0","targetAbi":"10.11.0.0",
-             "framework":"net9.0","dotnet":"9.0.x","jellyfin":"10.11.0",
-             "primary":true,"preview":false},
-            {"abi":"12.0","base":"12.0.0","targetAbi":"12.0.0.0",
-             "framework":"net10.0","dotnet":"10.0.x","jellyfin":"12.0.0-rc5",
-             "primary":false,"preview":true}
-          ]'
-          test "$(jq '[.[] | select(.primary)] | length' <<<"$rows")" -eq 1 \
-            || { echo "exactly one row must be primary" >&2; exit 1; }
-          echo "matrix=$(jq -c . <<<"$rows")" >> "$GITHUB_OUTPUT"
+    uses: ./.github/workflows/abis.yml
 
   check:
     name: test (${{ matrix.row.abi }})
