@@ -1,8 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- Follows the ABI row being built; see the plugin csproj. -->
-    <TargetFramework Condition="'$(TargetFramework)' == ''">net9.0</TargetFramework>
+    <!-- Follows the ABI row being built; see the plugin csproj for why the
+         override is JellyfinFramework and not TargetFramework. -->
+    <JellyfinFramework Condition="'$(JellyfinFramework)' == ''">net9.0</JellyfinFramework>
+    <TargetFramework>$(JellyfinFramework)</TargetFramework>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
   </PropertyGroup>

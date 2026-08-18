@@ -6,7 +6,12 @@
        overrides gives the primary row, which is what a local build wants. -->
   <PropertyGroup>
     <JellyfinVersion Condition="'$(JellyfinVersion)' == ''">10.11.0</JellyfinVersion>
-    <TargetFramework Condition="'$(TargetFramework)' == ''">net9.0</TargetFramework>
+    <!-- Deliberately NOT overridden as TargetFramework: MSBuild strips a global
+         TargetFramework before restore, so -p:TargetFramework=net10.0 restores
+         the row's packages against net9.0 and NU1202s. A custom property
+         survives restore and then sets the real one. -->
+    <JellyfinFramework Condition="'$(JellyfinFramework)' == ''">net9.0</JellyfinFramework>
+    <TargetFramework>$(JellyfinFramework)</TargetFramework>
     <!-- Tracks the Jellyfin ABI it is built against, kofinsyncqueue convention:
          <server major.minor>.0.<build>. The prefix is what makes a v12 server
          rank the v12 zip above the 10.11 one, since Jellyfin treats targetAbi

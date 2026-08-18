@@ -44,7 +44,7 @@ changelog="$(awk '
     | awk 'NR > 1 { printf "\\n" } { printf "%s", $0 }')"
 
 build_args=(-c Release -o "$stage" -p:PluginVersion="$version")
-[ -n "${FRAMEWORK:-}" ] && build_args+=(-p:TargetFramework="$FRAMEWORK")
+[ -n "${FRAMEWORK:-}" ] && build_args+=(-p:JellyfinFramework="$FRAMEWORK")
 [ -n "${JELLYFIN_VERSION:-}" ] && build_args+=(-p:JellyfinVersion="$JELLYFIN_VERSION")
 
 echo "packaging $name $version (targetAbi $target_abi${FRAMEWORK:+, $FRAMEWORK})"

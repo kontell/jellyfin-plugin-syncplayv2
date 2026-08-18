@@ -80,7 +80,7 @@ jobs:
       - name: Run tests
         run: |
           dotnet test -c Release --nologo \
-            -p:TargetFramework=${{ matrix.row.framework }} \
+            -p:JellyfinFramework=${{ matrix.row.framework }} \
             -p:JellyfinVersion=${{ matrix.row.jellyfin }}
 
   package:
