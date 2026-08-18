@@ -488,7 +488,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         }
 
         /// <inheritdoc />
-        public void RendezvousMember(SessionInfo session, CancellationToken cancellationToken)
+        public void RendezvousMember(SessionInfo session, string reason, CancellationToken cancellationToken)
         {
             if (!_participants.TryGetValue(session.Id, out GroupMember member))
             {
@@ -499,9 +499,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             member.LastCorrectionDelayTicks = 0;
 
             _logger.LogInformation(
-                "Session {SessionId} cannot seek into position in group {GroupId}; rendezvousing instead.",
+                "Session {SessionId} rendezvousing in group {GroupId}: {Reason}.",
                 session.Id,
-                GroupId.ToString());
+                GroupId.ToString(),
+                reason);
 
             // Everything from here is the ordinary hot join: BeginHotJoin stops
             // the group waiting and pushes a snapshot to reload from, and the

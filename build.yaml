@@ -14,7 +14,7 @@ guid: "181f9934-bf71-4941-974e-a5f2cdcccc4e"
 # The build number itself lives in the csproj's PluginVersion, which is what
 # tools/package.sh reads; the value here is documentation and is asserted
 # against it at release time.
-version: "10.11.0.3"
+version: "10.11.0.4"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "kontell"
@@ -24,6 +24,15 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.SyncPlayV2.dll"
 changelog: |-
+  - The rendezvous now happens where the group actually gives up on a
+    member: the 10s wait timeout. Live measurement showed the correction
+    branch it was added to in 10.11.0.3 is never reached by the member it
+    was written for - a transcoding client answers a group Seek with one
+    correction at ~7s, the wait timeout fires at 10s, and its next report
+    lands after the group has left Waiting, so a policy needing a second
+    correction never fires. Timing out a v2 member now pushes it a
+    snapshot and answers its next Ready with a private scheduled Unpause,
+    instead of abandoning it where it stood. v1 members are unaffected.
   - A member that cannot seek into position no longer holds the group up.
     A transcoded stream lands a seek on its segment boundary rather than
     where the group asked, so the correction was sent again and again -

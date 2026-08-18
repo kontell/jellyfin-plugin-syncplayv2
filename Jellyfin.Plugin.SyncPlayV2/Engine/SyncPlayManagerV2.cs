@@ -738,9 +738,41 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
                         foreach (var session in group.GetStalledBufferingSessions(GroupWaitTimeout))
                         {
-                            _logger.LogWarning("Session {SessionId} kept group {GroupId} waiting for over {Timeout}, ignoring it until it reports again.", session.Id, group.GroupId.ToString(), GroupWaitTimeout);
+                            // This is the moment the group gives up on a member,
+                            // and until now giving up meant abandoning it: the
+                            // group played on and the member was left wherever it
+                            // happened to be, with nothing to bring it back but
+                            // the next group command.
+                            //
+                            // It is also, for a member whose transport cannot seek
+                            // accurately, the *only* moment reached. Measured on a
+                            // transcoding Kodi client: a group Seek is answered
+                            // with one correction at ~7s, this timeout fires at
+                            // 10s, and the member's next report lands after the
+                            // group has already left Waiting — so a policy that
+                            // needs a second correction to trigger never triggers.
+                            //
+                            // A v2 member gets a rendezvous instead: the group
+                            // still stops waiting, but the member is pushed a
+                            // snapshot and its next Ready is answered with a
+                            // private scheduled Unpause at the live position. v1
+                            // members cannot be told any of that, so they are
+                            // abandoned exactly as before.
+                            if (group.IsV2Member(session.Id)
+                                && SyncPlayV2Plugin.Instance?.Configuration.HotJoin != false)
+                            {
+                                group.RendezvousMember(
+                                    session,
+                                    $"kept the group waiting for over {GroupWaitTimeout}",
+                                    CancellationToken.None);
+                            }
+                            else
+                            {
+                                _logger.LogWarning("Session {SessionId} kept group {GroupId} waiting for over {Timeout}, ignoring it until it reports again.", session.Id, group.GroupId.ToString(), GroupWaitTimeout);
 
-                            group.MarkIgnoredByTimeout(session);
+                                group.MarkIgnoredByTimeout(session);
+                            }
+
                             group.HandleRequest(session, new IgnoreWaitGroupRequest(true), CancellationToken.None);
                         }
                     }
