@@ -553,8 +553,34 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// Sends a plugin-wire group update (open Type string, StateVersion stamped)
         /// to a single session. Delivery faults are logged by the sender.
         /// </summary>
+        /// <summary>
+        /// Update types the protocol added at v2. Spec §2: these are only ever
+        /// sent to members that negotiated v2, which is what lets one group hold
+        /// v1 and v2 members at once.
+        /// </summary>
+        private static readonly HashSet<string> V2OnlyUpdates =
+            new(StringComparer.Ordinal) { "StateSnapshot", "PositionBeacon" };
+
         private void SendWireUpdate(SessionInfo to, string type, object data, CancellationToken cancellationToken)
         {
+            // The beacon and the reconnect resync each check the member's
+            // version at their own call site; this one did not, so a v1 member
+            // pulled onto the hot-join path was sent a StateSnapshot it cannot
+            // read. Gate centrally instead, so the rule holds for every caller
+            // rather than for the callers that remembered.
+            if (V2OnlyUpdates.Contains(type)
+                && _participants.TryGetValue(to.Id, out GroupMember member)
+                && member.ProtocolVersion < 2)
+            {
+                _logger.LogDebug(
+                    "Withholding {Type} from session {SessionId} in group {GroupId}: protocol v{Version}.",
+                    type,
+                    to.Id,
+                    GroupId.ToString(),
+                    member.ProtocolVersion);
+                return;
+            }
+
             _ = _sender.SendGroupUpdate(
                 to,
                 new WireGroupUpdate
@@ -746,8 +772,15 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
             member.Session = session;
             member.IsConnected = true;
-            member.IgnoreGroupWait = false;
             member.IgnoredByTimeout = false;
+
+            // Same rule as the report path: reconnecting undoes the group's own
+            // "stop waiting for this one", not a spectator choice the member
+            // made and has not taken back.
+            if (!member.IgnoreGroupWaitByRequest)
+            {
+                member.IgnoreGroupWait = false;
+            }
             BumpStateVersion();
 
             _logger.LogInformation("Session {SessionId} reconnected to group {GroupId} within the grace window.", session.Id, GroupId.ToString());
@@ -839,6 +872,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (_participants.TryGetValue(session.Id, out GroupMember value))
             {
                 value.IgnoreGroupWait = ignoreGroupWait;
+                // Remember that this was the member's own choice, so a later
+                // report cannot undo it the way it undoes a timeout.
+                value.IgnoreGroupWaitByRequest = ignoreGroupWait;
             }
         }
 
@@ -1005,9 +1041,15 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 if (!isBuffering && value.IgnoredByTimeout)
                 {
                     // The member reported again after being ignored for keeping the group
-                    // waiting; let the group wait for it once more.
+                    // waiting; let the group wait for it once more — unless it asked not
+                    // to be waited for, which is a decision of the member's and not the
+                    // group's to reverse.
                     value.IgnoredByTimeout = false;
-                    value.IgnoreGroupWait = false;
+
+                    if (!value.IgnoreGroupWaitByRequest)
+                    {
+                        value.IgnoreGroupWait = false;
+                    }
                 }
             }
         }

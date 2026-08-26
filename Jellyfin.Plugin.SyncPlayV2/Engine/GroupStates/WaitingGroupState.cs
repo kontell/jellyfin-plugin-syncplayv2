@@ -480,7 +480,19 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     // permanently adrift anyway. Hand it to the hot-join path
                     // instead: the group carries on, and the member reloads and
                     // is given a private scheduled start at the live position.
-                    if (context is IGroupStateContextV2 v2 && v2.ShouldRendezvous(session, delayTicks))
+                    // IsV2Member, not just "the context is a v2 context": the
+                    // context is this plugin's Group, so that cast always
+                    // succeeds and said nothing about the *member*. Without the
+                    // member check a v1 client was rendezvoused and sent a
+                    // StateSnapshot it cannot read — measured against real
+                    // jellyfin-web. The sibling entry point in
+                    // SyncPlayManagerV2 (the wait-timeout sweep) has always
+                    // gated on both this and the HotJoin config; this one is
+                    // brought into line with it.
+                    if (context is IGroupStateContextV2 v2
+                        && v2.IsV2Member(session.Id)
+                        && SyncPlayV2Plugin.Instance?.Configuration.HotJoin != false
+                        && v2.ShouldRendezvous(session, delayTicks))
                     {
                         v2.RendezvousMember(session, "corrections are not closing the gap", cancellationToken);
                         SendGroupStateUpdate(context, request, session, cancellationToken);

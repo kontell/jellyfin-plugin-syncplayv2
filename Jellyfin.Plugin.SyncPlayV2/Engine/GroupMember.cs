@@ -66,6 +66,21 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         public bool IgnoreGroupWait { get; set; }
 
         /// <summary>
+        /// Gets or sets a value indicating whether the member itself asked not
+        /// to be waited for, as opposed to the group having given up on it.
+        ///
+        /// Both states set <see cref="IgnoreGroupWait"/>, but they must not be
+        /// undone by the same event: the group is entitled to start waiting for
+        /// a member again once it reports, and is not entitled to overrule a
+        /// user who chose to be a spectator. One field carrying both meanings
+        /// silently cleared the user's choice on the next report — measured
+        /// against jellyfin-web, which sets IgnoreWait when local playback
+        /// resumes.
+        /// </summary>
+        /// <value><c>true</c> when the member requested it via SetIgnoreWait.</value>
+        public bool IgnoreGroupWaitByRequest { get; set; }
+
+        /// <summary>
         /// Gets or sets the time at which this member last started buffering.
         /// </summary>
         /// <value>The time at which the member last started buffering.</value>
