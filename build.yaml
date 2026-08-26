@@ -14,7 +14,7 @@ guid: "181f9934-bf71-4941-974e-a5f2cdcccc4e"
 # The build number itself lives in the csproj's PluginVersion, which is what
 # tools/package.sh reads; the value here is documentation and is asserted
 # against it at release time.
-version: "10.11.0.4"
+version: "10.11.0.5"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "kontell"
@@ -24,6 +24,20 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.SyncPlayV2.dll"
 changelog: |-
+  - Three defects a real v1 client found in a mixed group, none of them
+    reachable with v2 members alone. A v1 member whose corrections did not
+    converge was rendezvoused and sent a StateSnapshot it cannot read:
+    WaitingGroupState gated on the *group* being a v2-capable context,
+    which is always true here, instead of on the member's own negotiated
+    version - the wait-timeout sweep had always gated on both that and the
+    HotJoin config, and this path is now brought into line. A member that
+    asked not to be waited for had that choice silently reversed:
+    IgnoreGroupWait carried both "the group gave up on you" and "you asked
+    not to be waited for", so the next report cleared both - jellyfin-web
+    sets IgnoreWait when local playback resumes, and the group went back to
+    counting a member sitting minutes away. And SendWireUpdate had no
+    protocol gate of its own, so a v2-only update could reach a v1 socket;
+    it is gated centrally now rather than at each caller that remembered.
   - The rendezvous now happens where the group actually gives up on a
     member: the 10s wait timeout. Live measurement showed the correction
     branch it was added to in 10.11.0.3 is never reached by the member it
