@@ -52,7 +52,7 @@ MEMBERS = {
         "device_name": "Kodi (P1D)",
     },
     "TAB": {
-        "adb": "192.168.1.150:42753",
+        "adb": "192.168.1.150:38585",
         "settings": "/storage/emulated/0/Android/data/org.xbmc.kodi/files/"
                     ".kodi/userdata/addon_data/plugin.video.kofin/settings.xml",
         "device_name": "Kodi (192.168.1.150)",

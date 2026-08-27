@@ -39,13 +39,13 @@ KODI_LOG = {
     "PRS": ("local", "/home/conor/.var/app/tv.kodi.Kodi/data/temp/kodi.log"),
     "OMG": ("local", "/home/conor/.kodi/temp/kodi.log"),
     "L22": ("local", "/home/conor/.var/app/tv.kodi.Kodi/data/temp/kodi.log"),
-    "TAB": ("192.168.1.150:42753",
+    "TAB": ("192.168.1.150:38585",
             "/storage/emulated/0/Android/data/org.xbmc.kodi/files/.kodi/temp/kodi.log"),
     "BRV": ("192.168.1.198:46301",
             "/storage/emulated/0/Android/data/org.xbmc.kodi/files/.kodi/temp/kodi.log"),
 }
 
-ADB = {"TAB": "192.168.1.150:42753", "BRV": "192.168.1.198:46301"}
+ADB = {"TAB": "192.168.1.150:38585", "BRV": "192.168.1.198:46301"}
 
 AV1_ITEM = "ade40d5b06247a8b4dab2588e9d9e2d9"     # Frasier Timecode AV1, 600s
 H264_ITEM = "fc7185543e6c3b0664c81b8822bd2b14"    # SyncPlay Timecode h264, 600s
@@ -296,7 +296,7 @@ def members_of(member="PRS"):
     return (g[0].get("Members") or []) if g else []
 
 
-def reset(members=("PRS", "OMG")):
+def reset(members=("PRS", "OMG", "TAB")):
     """Everything back to nothing: out of groups, nothing playing."""
     for m in members:
         try:

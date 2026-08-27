@@ -184,30 +184,92 @@ focused item and stops on the one that mentions spectating.
 
 ---
 
-## 4. Transcoding: the parked question, answered
+## 3a. H3 — the server restarted underneath a live group
 
-The parked finding was that fine sync arms on a transcoded stream and pulses
-fire, but the displacement comes back 10–20 % short and once in the wrong
-direction. Three explanations were open: the actuator does not shift an HLS
-stream, the group loop measures the wrong thing, or the head counters are read
-wrongly.
+Run with the user at the keyboard, because the server's own restart route has
+now stopped Jellyfin outright **twice out of two**: the unit is
+`Restart=on-failure` and the process exits 0, so systemd leaves it down, and
+the ssh account cannot start it. That is an environment defect rather than a
+plugin one, but it makes H3 a two-person cell until the unit is changed.
 
-**None of them. The transcoded stream does not play at real time.**
+Group of three (PRS, OMG, TAB) playing, all within 50 ms. The server was away
+for **84 s**.
 
-The experiment drives `inputstream.tempo` directly (`tools/tempoprobe.py`),
-which takes the group, the residual estimator and the pulse planner out of it:
-start playback in a group so the route is stamped, then *leave* the group so
-kofin's own scheduler stops writing the file, then write rates by hand and read
-back the add-on's head counters (`content_ms − output_ms`), Kodi's reported
-position, and the wall clock. A rate `r` held for `T` should displace the
-content by `(r−1)×T` on all three.
+| | result |
+|---|---|
+| Direct-playing members (PRS, OMG) | **kept playing throughout, and stayed within 30 ms of each other** — 161 291/161 120, 171 422/171 426, 181 498/181 499, 191 817/191 789 |
+| The transcoding member (TAB) | **stopped** — its HLS stream died with the server |
+| Groups | gone; `/SyncPlay/List` empty afterwards (they live in the plugin's memory) |
+| Recovery | a fresh three-member group formed and reached Playing, all within ~780 ms |
 
-Doing this inside the group first produced nonsense, because kofin's scheduler
-and the probe were fighting over the same file — its pulses are in the log
-interleaved with the probe's. That is worth stating: the first version of this
-experiment measured the two of us, not the actuator.
+The two free-running clocks holding to 30 ms across an 84-second outage is the
+strongest agreement measured anywhere in this exercise.
 
-**DirectStream — the actuator is exact.**
+**Defect found: kofin retries a rejoin into a group that no longer exists,
+forever.** `GroupDoesNotExist` is handled by calling `_attempt_rejoin()`, which
+asks to join the very group the server has just said does not exist. The server
+answers 204 and pushes `GroupDoesNotExist` again, so the two loop at the
+`AUTO_REJOIN_INTERVAL` spacing (~34 s observed) with no give-up — against a
+docstring that reads "§9: one automatic re-join before surfacing an error".
+Observed on all three members after the restart. Not yet fixed.
+
+Note on the Tab: it does **not** direct-play AV1 — the codec is absent from its
+`directPlayVideoCodecs` and `forceDirectPlay` is off, so the AV1 asset
+transcodes there. Every timing figure attributed to the Tab in either round is
+therefore a transcoding member's, which matters given §4.
+
+---
+
+## 4. Transcoding: what the parked question actually was
+
+**Read the correction first.** An earlier version of this section concluded
+that "a transcoded stream does not play at real time" — segment rates between
+0.754 and 1.486, a cumulative rate of 0.926, 9.1 s of drift in 115 s. That was
+wrong, and it was wrong because of the harness, not the transcode.
+
+The member under test had `videoplayer.queuetimesize` set to **1.0 s** with an
+empty `syncPlayQueueRestore` record. Fine sync shortens the Kodi 22 player
+queue to 1 s for the session on purpose, so a tempo pulse lands in ~2 s instead
+of ~5, and records the original so it can be put back. The restore had been
+lost (see below), so the member had been running on a 1 s queue for hours.
+
+The server's HLS segments are **3 s**. A queue shorter than a segment cannot
+bridge the boundary, so the player drains, caches and resyncs at every one.
+The user saw it before the harness did — *"the video that's playing is being
+momentarily paused/played every few seconds"* — and Kodi's log shows the cycle
+at ~3 s intervals:
+
+```
+CDVDAudio::Pause - pausing audio stream
+CVideoPlayer::SetCaching - caching state 2
+CVideoPlayerVideo - Stillframe left, switching to normal playback
+CVideoPlayer::HandleMessages - player started 2
+CVideoPlayer::SetCaching - caching state 0
+CVideoPlayerVideo - CDVDMsg::GENERAL_RESYNC(...)
+```
+
+### The measurement, redone
+
+Same asset, same machine, same 5 s sampling — but with the wall clock taken
+either side of the RPC rather than after it (the original loop's other flaw,
+though it turned out not to be the one that mattered: RPC latency measured 1–8
+ms throughout).
+
+| | queue 1.0 s (as measured before) | queue 4.0 s (Kodi's default) |
+|---|---|---|
+| segment rate range | 0.754 – 1.486 | 0.977 – 1.021 |
+| cumulative rate over ~110 s | 0.926 | **1.0003** |
+| drift | **−9.1 s** | **−15 … +173 ms** |
+
+A transcode holds real time as well as a direct stream does. The ±2 % per
+segment is the position readout quantising on a 5 s sample, the same as
+DirectStream shows.
+
+### The actuator
+
+Driving `inputstream.tempo` directly (`tools/tempoprobe.py`) — group, residual
+estimator and pulse planner all taken out of it — a rate `r` held for `T`
+should displace the content by `(r−1)×T`. On DirectStream it is exact:
 
 | rate × 5 s | expected | head Δ | Kodi position − wall |
 |---|---|---|---|
@@ -216,64 +278,50 @@ experiment measured the two of us, not the actuator.
 | 1.10× | +500 ms | +497 ms | +483 ms |
 | 0.90× | −500 ms | −488 ms | −505 ms |
 
-Two independent channels agree with the ask to within 1 %.
+On a transcode, with the routing change that is still parked in a stash
+(`TEMPO_METHODS` extended to `Transcode`, plus a `manifest_type` for the
+ffmpeg open path):
 
-**Transcode — the actuator still delivers; the stream does not hold rate.**
-Head Δ came back −999 / +469 / −466 against asks of −1000 / +500 / −500. But
-the *null* trial — rate exactly 1.0, no pulse at all — showed the position
-losing **1.1–1.3 s per 10.5 s**, with `Stillframe left`, `SetCaching` and
-`GENERAL_RESYNC` in the log.
+| rate × 5 s | expected | head Δ, queue 1.0 s | head Δ, queue 4.0 s |
+|---|---|---|---|
+| 1.25× | +1250 ms | +775 | **+1203** |
+| 0.80× | −1000 ms | −440 → −999 | −746 |
+| 1.10× | +500 ms | +469 | +549 |
+| 0.90× | −500 ms | −466 | −668 |
 
-So the control that settles it: the same transcode with `inputstream.tempo`
-**out of the pipeline entirely**, sampled every 5 s for two minutes, against
-DirectStream on the same machine and asset.
+Zero stalls during the 4.0 s run, against a continuous stall cycle in the 1.0 s
+one. The gross under-delivery is gone. What is left is scatter of up to ~35 %,
+which is still well short of the ±1 % DirectStream manages and is **not
+explained**. One candidate is visible in the data and untested: the add-on is
+told `queue_secs = 1.0` through the ListItem property, published at join before
+the queue was forced back, so its own accounting and the player's real 4 s
+queue disagree.
 
-| | transcode, no tempo | DirectStream |
-|---|---|---|
-| segment rate range | **0.754 – 1.486** | 0.976 – 1.018 |
-| cumulative rate | **0.926** | **1.0000** |
-| worst drift | **−9.1 s in 115 s** | **±95 ms in 105 s** |
+### What this means for fine sync on a transcode
 
-The DirectStream ±2 % is the position readout alternating on a 5 s sample; its
-cumulative rate is 1.0000 and its drift never leaves ±100 ms. The transcode
-runs ~15 % slow for tens of seconds at a time and then catches up in bursts of
-~40 % — a saw-tooth, not a rate offset.
+Not "a transcoding member cannot be synchronised". The obstacle is the queue
+shortening itself: **1 s is below the segment duration**, so arming fine sync on
+a transcoded stream is what breaks its playback. Any attempt to extend fine sync
+to transcodes has to keep the queue at or above the segment duration and accept
+that a pulse then takes a queue-depth longer to become audible — or not shorten
+the queue for HLS at all.
 
-**And the readout is honest.** Three paired samples of the burned-in timecode
-against the reported position, on the transcode:
+The `±6 s` group swing with a transcoding member, and the "achieved 1.025×
+when 1.250× was asked", were both measured on a member in this state.
 
-| screen | reported | difference |
-|---|---|---|
-| 302 172 ms | 302 013 ms | +159 ms |
-| 333 036 ms | 333 032 ms | +4 ms |
-| 354 140 ms | 354 003 ms | +137 ms |
+### The defect behind it
 
-That answers **T7** — a transcoding member does report the position it is
-showing — and it means the wander is real playback, not a reporting artefact.
+`restore_queue()` cleared the record as soon as `set_kodi_setting` returned
+true. That only means Kodi took the value into memory — a JSON-RPC settings
+write reaches `guisettings.xml` when Kodi *saves*, so a Kodi killed in between
+comes back up shortened with no record left to undo it. This is the second
+device found in that state; the code comments already record the first. Fixed
+in kofin: the record is kept until a later start can see the value really came
+back. See `plugin.video.kofin#195`.
 
-**What this means for fine sync.** Every parked observation follows:
-
-* "requested 1.250× → achieved 1.025×" was an achieved *rate* inferred from
-  position deltas over a window in which the stream's own rate error dominated.
-* "requested 0.969× → achieved 1.016×, wrong direction" is a −3 % ask inside a
-  +40 % catch-up burst.
-* "10–20 % short regardless of magnitude" is ±5 % of a 5 s window — an additive
-  disturbance that looks proportional when the pulse length is fixed.
-* "group offset swung ±6 s with a transcoding member" is the saw-tooth.
-
-The pulse budget is 25 % for at most 10 s, so at most 2.5 s of displacement per
-pulse followed by a settle window. Against a member losing 8–9 s a minute and
-returning it in bursts, that is an order of magnitude short. **Raising the
-budget would not help and should not be done**: the disturbance is not a
-constant rate error, so a bigger pulse would overshoot the catch-up bursts as
-badly as it undershoots the stalls.
-
-The open question is now a different one, and it is not a SyncPlay question:
-why does a transcoded HLS stream on this rig fail to hold real time when the
-server encodes at ~18× and the client is not reporting a cache stall? Until
-that is answered, a transcoding member cannot be finely synchronised by any
-actuator, and the honest behaviour for the group is the one it already has —
-rendezvous it rather than seek it repeatedly.
+**Rig note:** check `videoplayer.queuetimesize` before trusting any timing
+measurement from a member. Kodi 22's default is 40 (4.0 s); Kodi 21 has no such
+setting and is fixed at 8 s.
 
 ---
 
@@ -286,5 +334,6 @@ rendezvous it rather than seek it repeatedly.
 3. **H4** (Android standby), **F8** (per-pulse against channel 2), **H8** (the
    60-minute soak), **Gate 0 channel 1** (camera) — all need hardware that left
    the rig.
-4. **Why a transcode does not hold real time** — §4.
+4. **The residual ~35 % scatter in transcode pulse displacement** — §4. The
+   gross failure is explained; this is not.
 5. **A/B of the RT2 regression against 10.11.0.5** — §1.

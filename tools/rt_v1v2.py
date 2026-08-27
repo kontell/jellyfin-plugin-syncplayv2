@@ -263,6 +263,68 @@ def ignorewait():
     }
 
 
+def transport_death():
+    """RT2c — the other place the engine synthesizes an IgnoreWait.
+
+    A transport death while the group is waiting takes the same path as the
+    wait timeout (SyncPlayManagerV2.cs:573), so it had the same defect: the
+    member was marked as having asked not to be waited for, and reconnecting
+    could then never undo it. RT2b's reconnect arm is not this case — there the
+    member really had asked.
+    """
+    probe = wireclient.WireClient("V1", protocol=1)
+    probe.mint_token()
+    probe.connect()
+    holder = wireclient.WireClient("HOLD", protocol=2)
+    holder.mint_token()
+    holder.connect()
+    try:
+        holder.leave()
+    except Exception:  # noqa: BLE001
+        pass
+    fresh_group(probe)
+    holder.join(probe.group_id)
+    time.sleep(1)
+    banner("RT2c — a transport death while the group waits, then a reconnect")
+    rig.queue(REAL, ITEM, START_MS)
+    for _ in range(20):
+        time.sleep(1)
+        probe.ready(START_MS, is_playing=False)
+        holder.ready(START_MS, is_playing=False)
+        if rig.state(REAL) == "Playing":
+            break
+    if rig.state(REAL) != "Playing":
+        print("  could not reach Playing: %s" % rig.state(REAL))
+        return None
+
+    print("  before:            IgnoreGroupWait=%s" % _probe_flag(probe), flush=True)
+    logmark = svrlog.mark()
+    target = START_MS + 90000
+    rig.seek(REAL, target)          # the group is now Waiting
+    time.sleep(0.8)
+    print("  group state: %s; killing the probe's socket" % rig.state(REAL), flush=True)
+    probe.close()
+    for _ in range(10):
+        time.sleep(1)
+        holder.ready(target, is_playing=True)
+    after_death = _probe_flag(probe)
+    print("  after the socket died: IgnoreGroupWait=%s" % after_death, flush=True)
+    for l in svrlog.grep(["keeping its membership"], logmark)[-2:]:
+        print("     LOG %s" % l[:150], flush=True)
+
+    probe.connect()
+    time.sleep(3)
+    after_reconnect = _probe_flag(probe)
+    print("  after reconnect:      IgnoreGroupWait=%s  (expected False)"
+          % after_reconnect, flush=True)
+    for l in svrlog.grep(["reconnected to group"], logmark)[-2:]:
+        print("     LOG %s" % l[:150], flush=True)
+
+    probe.leave(); probe.close()
+    holder.leave(); holder.close()
+    return {"after_death": after_death, "after_reconnect": after_reconnect}
+
+
 def beacon():
     """PositionBeacon and StateSnapshot are v2-only; a v1 socket must see
     neither, over a window long enough for several beacons."""
@@ -316,7 +378,7 @@ def beacon():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("what", choices=["rendezvous", "ignorewait", "beacon", "all"])
+    parser.add_argument("what", choices=["rendezvous", "ignorewait", "transport", "beacon", "all"])
     args = parser.parse_args()
     results = {}
     if args.what in ("rendezvous", "all"):
@@ -324,6 +386,8 @@ if __name__ == "__main__":
         results["rt1b_v2"] = rendezvous(2)
     if args.what in ("ignorewait", "all"):
         results["rt2"] = ignorewait()
+    if args.what in ("transport", "all"):
+        results["rt2c"] = transport_death()
     if args.what in ("beacon", "all"):
         results["rt3"] = beacon()
     print("\n" + json.dumps(results, indent=2, default=str))
