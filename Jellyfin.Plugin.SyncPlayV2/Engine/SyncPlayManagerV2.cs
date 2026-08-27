@@ -428,6 +428,18 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 CancelDeferredBuffering(session.Id);
             }
 
+            // This entry point is the wire's; the engine's own synthesized
+            // requests go straight to Group.HandleRequest. So this is the only
+            // place an IgnoreWait can be attributed to the member itself.
+            if (request is IgnoreWaitGroupRequest ignoreWait
+                && _sessionToGroupMap.TryGetValue(session.Id, out var ownGroup))
+            {
+                lock (ownGroup)
+                {
+                    ownGroup.RecordIgnoreWaitByRequest(session, ignoreWait.IgnoreWait);
+                }
+            }
+
             HandleRequestInternal(session, request, cancellationToken);
         }
 
