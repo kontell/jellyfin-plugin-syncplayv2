@@ -872,9 +872,30 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (_participants.TryGetValue(session.Id, out GroupMember value))
             {
                 value.IgnoreGroupWait = ignoreGroupWait;
-                // Remember that this was the member's own choice, so a later
-                // report cannot undo it the way it undoes a timeout.
-                value.IgnoreGroupWaitByRequest = ignoreGroupWait;
+            }
+        }
+
+        /// <summary>
+        /// Remembers that not being waited for was the member's own choice, so
+        /// that a later report or reconnect cannot undo it the way those undo
+        /// the group's own giving up.
+        ///
+        /// Deliberately separate from <see cref="SetIgnoreGroupWait"/>: the
+        /// engine synthesizes an IgnoreWaitGroupRequest of its own twice — the
+        /// wait-timeout sweep and a transport death while the group waits — and
+        /// both reach the same state handler as a real one from the wire.
+        /// Stamping inside the setter therefore marked every timed-out member as
+        /// having asked, so the group never waited for it again for the rest of
+        /// the group's life. Measured: a member the group gave up on at 10s
+        /// stayed IgnoreGroupWait=true across its next report.
+        /// </summary>
+        /// <param name="session">The session.</param>
+        /// <param name="byRequest">Whether the member asked.</param>
+        public void RecordIgnoreWaitByRequest(SessionInfo session, bool byRequest)
+        {
+            if (_participants.TryGetValue(session.Id, out GroupMember value))
+            {
+                value.IgnoreGroupWaitByRequest = byRequest;
             }
         }
 
