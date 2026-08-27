@@ -38,7 +38,7 @@ def banner(text):
 
 def fresh_group(probe):
     """A two-member group: one real kofin, one synthetic at `probe.protocol`."""
-    rig.reset((REAL, "OMG", "TAB", "BRV"))
+    rig.reset((REAL, "OMG", "TAB"))
     try:
         probe.leave()
     except Exception:  # noqa: BLE001
@@ -320,9 +320,20 @@ def transport_death():
     for l in svrlog.grep(["reconnected to group"], logmark)[-2:]:
         print("     LOG %s" % l[:150], flush=True)
 
+    # The reconnect took ReconnectSession's early branch (same live session,
+    # new socket), which resyncs but does not touch the flag. The clear that
+    # matters is the same one RT2a exercises: the member reporting in position
+    # while the group is waiting. If it fires here the attribution is sound and
+    # it is only the timing of the clear that differs.
+    _report_in_position(probe, holder, "RT2c", START_MS + 120000)
+    after_report = _probe_flag(probe)
+    print("  after reporting in position: IgnoreGroupWait=%s  (expected False)"
+          % after_report, flush=True)
+
     probe.leave(); probe.close()
     holder.leave(); holder.close()
-    return {"after_death": after_death, "after_reconnect": after_reconnect}
+    return {"after_death": after_death, "after_reconnect": after_reconnect,
+            "after_report": after_report}
 
 
 def beacon():
@@ -333,7 +344,7 @@ def beacon():
     v2 = wireclient.WireClient("V2", protocol=2)
     v2.mint_token(); v2.connect()
 
-    rig.reset((REAL, "OMG", "TAB", "BRV"))
+    rig.reset((REAL, "OMG", "TAB"))
     for c in (v1, v2):
         try:
             c.leave()

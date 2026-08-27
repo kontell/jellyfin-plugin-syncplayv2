@@ -116,6 +116,26 @@ both are worth keeping:
   itself rendezvoused by the same sweep, so the holder has to answer during the
   timeout phase and go quiet only for the clearing seek.
 
+**RT2c — the other synthesized IgnoreWait.** The fix moves the stamp to the
+wire's entry point, which covers *both* places the engine raises an
+`IgnoreWaitGroupRequest` of its own. Only the wait-timeout one was measured
+above; this is the other — a transport death while the group is waiting
+(`SyncPlayManagerV2.cs:573`).
+
+| | IgnoreGroupWait |
+|---|---|
+| before | false |
+| socket killed while the group waits | **true** — the group correctly stops waiting for it |
+| after reconnecting inside the grace window | true |
+| after reporting in position while the group waits | **false** |
+
+The reconnect does not clear it, and that is not the fix failing: with the same
+live session and a new socket, `ReconnectSession` takes its early branch and
+only resyncs. The clear happens at the same place RT2a's does — the member's
+next in-position report while the group is waiting. Worth knowing rather than
+worth changing: a member that reconnects and then never reports stays
+un-waited-for until it does, which is the same condition as any ignored member.
+
 Not carried out: an A/B of this cell against 10.11.0.5 itself. The downgrade
 needs a server restart, and the restart during the first attempt stopped
 Jellyfin outright (`Restart=on-failure`, process exited 0, so systemd left it
