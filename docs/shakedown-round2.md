@@ -399,6 +399,83 @@ make the member stutter.
 The `±6 s` group swing with a transcoding member, and the "achieved 1.025×
 when 1.250× was asked", were both measured on a member in this state.
 
+### Making it work: two changes
+
+**The player queue is now sized for the route, not the session.** It is read
+when the player object is constructed, so the play route — the only place that
+knows the resolved play method — picks: the shortened 1 s for a direct route,
+and at least the segment duration for a transcode. The session publishes both
+sizes; `TRANSCODE_MIN_QUEUE_TENTHS` floors the transcode case at 4.0 s so a user
+whose own queue is below the segment duration is not left stuttering.
+
+Verified on hardware with `syncPlayShortQueue` **on**, which is the point — the
+shortening is now safe to leave enabled:
+
+| moment | `videoplayer.queuetimesize` |
+|---|---|
+| before the join | 40 |
+| after the join (session shortens) | **10** |
+| while the transcode plays (route raises) | **40** |
+| the add-on's own `queue_secs` | **4.0** |
+
+**The pulse gain is now learned.** A pulse on a segmented route lands further
+than asked — seven consecutive live pulses at 8–24 % long and none short. Rather
+than tabulate one rig's constant, the scheduler folds `moved / asked` into an
+EMA and asks for `residual / gain`. A direct route measures 1.00, so it costs
+nothing where there is nothing to correct.
+
+The first hardware run found a bug in it: `_arm()` reset the gain, and a
+transcode re-arms on **every** group seek, because the stream restarts with a
+new `PlaySessionId`. The gain never got past 1.05 while pulses kept landing
+14 % long:
+
+| moved | wanted | gain | error |
+|---|---|---|---|
+| +320 | +281 | 1.05 | +13.9 % |
+| +309 | +271 | 1.05 | +14.0 % |
+| +351 | +311 | 1.04 | +12.9 % |
+| +294 | +256 | 1.05 | +14.8 % |
+
+The gain is a property of the transport, not of the item, so it now survives a
+re-arm and is cleared only when playback stops. Re-run:
+
+| moved | wanted | gain | error |
+|---|---|---|---|
+| +280 | +244 | 1.05 | +14.8 % |
+| +207 | +188 | 1.09 | +10.1 % |
+| +275 | +262 | 1.10 | **+5.0 %** |
+| +227 | +216 | 1.12 | **+5.1 %** |
+
+Converging, as an EMA at α = 0.34 should: three pulses take the overshoot from
+15 % to 5 %.
+
+### The whole thing, end to end
+
+Six group seeks on a group of one transcoding member and one direct one,
+sampling the offset between them every 5 s:
+
+| | before (queue shortened to 1 s) | after |
+|---|---|---|
+| worst offset after a seek | **1695 ms** | **341 ms** |
+| median offset across all samples | — | **63 ms** |
+| segment stalls | continuous, every ~3 s | **7** across six seeks — one per reload |
+| pulse overshoot | 8–24 %, not learning | 15 % → 5 % over four pulses |
+
+Two of the four seeks in the earlier run left the member 1.3–1.7 s adrift and
+fine sync took ~25–30 s to reel each back. With the queue right from the first
+frame the reload itself lands far closer — no seek in this run left it more than
+341 ms out — so fine sync is trimming rather than rescuing.
+
+Offsets, seek by seek (ms):
+
+```
+seek 0: -16 -45 -80 +258 +122 +154 +32  -3
+seek 1: +24 -18 +274 +341 -72 -30 +141
+seek 2: -20 -45 +120  +63 +300 +80 -16 -52
+seek 3: -18 -42 +121  +44 +272 -120 +34 -4
+```
+
+
 ### The defect behind it
 
 `restore_queue()` cleared the record as soon as `set_kodi_setting` returned
