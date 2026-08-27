@@ -317,14 +317,84 @@ told `queue_secs = 1.0` through the ListItem property, published at join before
 the queue was forced back, so its own accounting and the player's real 4 s
 queue disagree.
 
+### The queue_secs experiment, and what fine sync actually does on a transcode
+
+The scatter above had one visible candidate: the add-on was told
+`queue_secs = 1.0` through the ListItem property, published at join before the
+queue was forced back, so its accounting and the player's real 4 s queue
+disagreed. Turning off `syncPlayShortQueue` makes `_shorten_queue` leave the
+queue alone and publish the real value, which tests it directly.
+
+**Refuted.** With `queue_secs = 4.0` against a real 4.0 s queue and no stalls,
+the probe's four trials still scattered (+1800 for +1250, −751 for −1000), and
+both channels agreed with each other (head +1800.1, position−wall +1775) — so
+it was never an accounting artefact.
+
+The numbers say what it is. Solving each for the time the rate was actually in
+force gives 7.2 s, 3.75 s, 5.5 s and 6.6 s against a nominal 5.0 s. The *rate*
+is applied correctly; the **duration it stays applied** is what moves. That is
+the probe's own fixed wall-clock hold colliding with coarser apply and revert on
+a segmented stream — and kofin's scheduler does not work that way. It writes the
+rate, waits for a confirmed state line, and measures the displacement between two
+confirmed lines rather than assuming a hold.
+
+So the number that matters is kofin's own, taken live: a transcoding member with
+fine sync armed and the queue left alone, in a group with a direct-playing one.
+
+| wanted | moved | error |
+|---|---|---|
+| −85 ms | −105 ms | +23.5 % |
+| +93 ms | +110 ms | +18.3 % |
+| +108 ms | +127 ms | +17.6 % |
+| +272 ms | +309 ms | +13.6 % |
+| +273 ms | +311 ms | +13.9 % |
+| −789 ms | −890 ms | +12.8 % |
+| −978 ms | −1055 ms | +7.9 % |
+
+Every pulse overshoots, none undershoots: a **systematic gain of about 1.15×**,
+not scatter. It is a calibration error in a loop that re-measures every round,
+which is why it converges rather than running away.
+
+And it does converge. Four group seeks, sampling the offset between the
+transcoding member and the direct one every 5 s:
+
+| seek to | offset over the following 45 s (ms) |
+|---|---|
+| 150 s | −27 +124 −104 +287 +340 +112 +10 +108 −140 |
+| 220 s | **+1695** +1278 +1306 +1281 +702 +336 −115 +27 +13 |
+| 300 s | −38 −66 −96 +288 +140 +80 −15 −50 −76 |
+| 190 s | **+1252** +1152 +1014 +973 +539 −2 +44 −178 +30 |
+
+Two of the four seeks landed the transcoding member **1.3–1.7 s out** — the
+known problem, a reload landing on a segment boundary rather than where the
+group asked. Fine sync closed both over ~25–30 s to within ~±150 ms. Nothing
+else in the system can close that gap: a command-only member simply keeps it
+until the next command. `[ syncplay/pulse ] cut by Seek` also fires correctly,
+and `[ syncplay/align ] carried: transcoding` shows the align path already
+declining to seek a member that cannot seek accurately.
+
+14 caching stalls across the run, clustered around the seeks — a transcode
+reload, not the segment-boundary starvation the 1 s queue caused.
+
 ### What this means for fine sync on a transcode
 
-Not "a transcoding member cannot be synchronised". The obstacle is the queue
-shortening itself: **1 s is below the segment duration**, so arming fine sync on
-a transcoded stream is what breaks its playback. Any attempt to extend fine sync
-to transcodes has to keep the queue at or above the segment duration and accept
-that a pulse then takes a queue-depth longer to become audible — or not shorten
-the queue for HLS at all.
+Fine sync **works** on a transcoded stream, provided the queue is not shortened
+below the segment duration. Measured above: pulses land with a consistent ~15 %
+overshoot instead of ±1 %, and a member left 1.7 s out by a reload is brought
+back inside ±150 ms in under half a minute.
+
+The one thing that must change to ship it is the queue. `_shorten_queue` takes
+the player to 1.0 s for every session, which is safe for a file or a static
+stream and fatal for a 3 s segmented one. The queue is read when the player
+object is constructed, so it can be decided per play rather than per session:
+short for a direct route, at or above the segment duration for a transcode. The
+cost is that a pulse on a transcoding member takes a queue-depth longer to
+become audible, which lengthens the settle window — the ~25-30 s convergence
+above is with a 4 s queue.
+
+Shipping the routing change **without** that guard would be worse than today:
+fine sync would arm on a transcode, shorten the queue below the segment, and
+make the member stutter.
 
 The `±6 s` group swing with a transcoding member, and the "achieved 1.025×
 when 1.250× was asked", were both measured on a member in this state.
