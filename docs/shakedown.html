@@ -1,0 +1,1422 @@
+<title>SyncPlay v2 Shakedown</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  /* ---- Light palette: the complete token set lives on bare :root ---- */
+  :root {
+    --ground:        #F6F7F9;
+    --surface:       #FFFFFF;
+    --surface-sunk:  #EEF1F4;
+    --rule:          #D8DEE4;
+    --rule-soft:     #E7EBEF;
+    --ink:           #171D23;
+    --ink-soft:      #45525E;
+    --ink-mute:      #6B7A87;
+    --accent:        #0B6E78;
+    --accent-soft:   #E2F0F1;
+    --accent-line:   #9CCBD0;
+    --gate:          #A2600A;
+    --gate-soft:     #FBF0DC;
+    --gate-line:     #E3C285;
+    --alarm:         #A33528;
+    --alarm-soft:    #FAE9E6;
+
+    --shadow: 0 1px 2px rgba(23,29,35,.05), 0 8px 24px -12px rgba(23,29,35,.14);
+
+    --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --cond: "IBM Plex Sans Condensed", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  /* System-dark (nothing stamped) — guarded so an explicit light choice wins */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:       #10161B;
+      --surface:      #161E24;
+      --surface-sunk: #1C262D;
+      --rule:         #2C3941;
+      --rule-soft:    #232E36;
+      --ink:          #E3E9ED;
+      --ink-soft:     #B0BDC6;
+      --ink-mute:     #8395A1;
+      --accent:       #4FBAC4;
+      --accent-soft:  #14343A;
+      --accent-line:  #2A6E77;
+      --gate:         #E0AA5A;
+      --gate-soft:    #362A16;
+      --gate-line:    #7A5B25;
+      --alarm:        #E38377;
+      --alarm-soft:   #391F1B;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    }
+  }
+
+  /* Explicit dark choice — wins over a light OS */
+  :root[data-theme="dark"] {
+    --ground:       #10161B;
+    --surface:      #161E24;
+    --surface-sunk: #1C262D;
+    --rule:         #2C3941;
+    --rule-soft:    #232E36;
+    --ink:          #E3E9ED;
+    --ink-soft:     #B0BDC6;
+    --ink-mute:     #8395A1;
+    --accent:       #4FBAC4;
+    --accent-soft:  #14343A;
+    --accent-line:  #2A6E77;
+    --gate:         #E0AA5A;
+    --gate-soft:    #362A16;
+    --gate-line:    #7A5B25;
+    --alarm:        #E38377;
+    --alarm-soft:   #391F1B;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 28px 96px;
+    display: grid;
+    grid-template-columns: 200px minmax(0, 1fr);
+    gap: 56px;
+    align-items: start;
+  }
+
+  /* ---------- masthead ---------- */
+  .mast {
+    grid-column: 1 / -1;
+    border-bottom: 2px solid var(--ink);
+    padding: 56px 0 22px;
+    margin-bottom: 44px;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: var(--cond);
+    font-weight: 700;
+    font-size: clamp(2.6rem, 6vw, 4.1rem);
+    line-height: .98;
+    letter-spacing: -.018em;
+    margin: 0 0 18px;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 1.14rem;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 26px;
+  }
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .fact {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .02em;
+    padding: 5px 10px;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    color: var(--ink-soft);
+    background: var(--surface);
+    white-space: nowrap;
+  }
+  .fact b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- side nav ---------- */
+  nav {
+    position: sticky;
+    top: 28px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+    border-left: 1px solid var(--rule);
+    padding-left: 16px;
+  }
+  nav ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+  nav a {
+    color: var(--ink-mute);
+    text-decoration: none;
+    display: flex;
+    gap: 9px;
+    border-radius: 2px;
+  }
+  nav a:hover { color: var(--accent); }
+  nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  nav .n { color: var(--accent-line); }
+  nav .blocking { color: var(--gate); }
+
+  main { min-width: 0; }
+
+  /* ---------- sections ---------- */
+  section { margin-bottom: 68px; scroll-margin-top: 24px; }
+  section > h2 {
+    font-family: var(--cond);
+    font-weight: 700;
+    font-size: 1.92rem;
+    letter-spacing: -.012em;
+    line-height: 1.12;
+    margin: 0 0 6px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+    text-wrap: balance;
+  }
+  section > .lede {
+    color: var(--ink-soft);
+    max-width: 68ch;
+    margin: 16px 0 26px;
+  }
+  h3 {
+    font-family: var(--cond);
+    font-weight: 600;
+    font-size: 1.24rem;
+    letter-spacing: -.005em;
+    margin: 36px 0 10px;
+    text-wrap: balance;
+  }
+  h4 {
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    margin: 28px 0 8px;
+  }
+  p { max-width: 68ch; margin: 0 0 16px; }
+  ul, ol { max-width: 68ch; padding-left: 22px; margin: 0 0 18px; }
+  li { margin-bottom: 7px; }
+  strong { font-weight: 600; color: var(--ink); }
+  a { color: var(--accent); }
+
+  code {
+    font-family: var(--mono);
+    font-size: .855em;
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule-soft);
+    padding: .08em .34em;
+    border-radius: 3px;
+    word-break: break-word;
+  }
+
+  pre {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.62;
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    margin: 0 0 20px;
+  }
+  pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+  /* ---------- gate: a real stop-the-line state, so it gets its own form ---------- */
+  .gate {
+    background: var(--gate-soft);
+    border: 1px solid var(--gate-line);
+    border-left: 4px solid var(--gate);
+    border-radius: 4px;
+    padding: 20px 22px;
+    margin: 0 0 28px;
+  }
+  .gate .tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--gate);
+    display: block;
+    margin-bottom: 8px;
+  }
+  .gate p:last-child { margin-bottom: 0; }
+
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 16px 20px;
+    margin: 0 0 24px;
+  }
+  .note p:last-child { margin-bottom: 0; }
+
+  .alarm {
+    background: var(--alarm-soft);
+    border: 1px solid var(--alarm);
+    border-radius: 4px;
+    padding: 16px 20px;
+    margin: 0 0 24px;
+  }
+  .alarm p:last-child { margin-bottom: 0; }
+  .alarm .tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--alarm);
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  /* ---------- tables ---------- */
+  .scroll { overflow-x: auto; margin: 0 0 24px; border: 1px solid var(--rule); border-radius: 5px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  caption {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    padding: 12px 16px 0;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  thead th {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--ink-mute);
+    background: var(--surface-sunk);
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num, th.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .id {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 10px;
+    white-space: nowrap;
+  }
+  .pill.block { background: var(--gate-soft); color: var(--gate); border: 1px solid var(--gate-line); }
+  .pill.key   { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-line); }
+  .pill.now   { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent-line); }
+  .pill.wait  { background: var(--surface-sunk); color: var(--ink-mute); border: 1px solid var(--rule); }
+
+  /* ---------- channel cards: trust order is real, so it is numbered ---------- */
+  .channels { display: grid; gap: 14px; margin: 0 0 26px; }
+  @media (min-width: 760px) { .channels { grid-template-columns: repeat(3, 1fr); } }
+  .ch {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 5px;
+    padding: 18px 18px 16px;
+    box-shadow: var(--shadow);
+  }
+  .ch .rank {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 6px;
+  }
+  .ch h4 {
+    font-family: var(--cond);
+    font-size: 1.06rem;
+    font-weight: 600;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--ink);
+    margin: 0 0 8px;
+  }
+  .ch p { font-size: 14px; color: var(--ink-soft); margin: 0; max-width: none; }
+
+  /* ---------- phase list: a genuine sequence ---------- */
+  .phases { list-style: none; padding: 0; margin: 0 0 24px; max-width: none; }
+  .phases li {
+    display: grid;
+    grid-template-columns: 46px minmax(0,1fr) auto;
+    gap: 16px;
+    align-items: baseline;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--rule-soft);
+    margin: 0;
+  }
+  .phases li:last-child { border-bottom: 0; }
+  .phases .ph {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  footer {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--rule);
+    padding-top: 20px;
+    margin-top: 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink-mute);
+  }
+
+  @media (max-width: 900px) {
+    .wrap { grid-template-columns: minmax(0,1fr); gap: 0; padding: 0 20px 72px; }
+    nav { display: none; }
+    .mast { padding-top: 40px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="mast">
+    <p class="eyebrow">Jellyfin SyncPlay v2 · plugin.video.kofin</p>
+    <h1>SyncPlay v2 Shakedown</h1>
+    <p class="standfirst">
+      Server plugin and its primary Kodi client, exercised together on real devices,
+      real codecs, and a deliberately bad network. Sequenced so the gate that
+      invalidates everything downstream runs first.
+    </p>
+    <div class="facts">
+      <span class="fact"><b>Server</b> minipie 10.11.11</span>
+      <span class="fact"><b>Plugin</b> SyncPlay v2 10.11.0.4 · Active</span>
+      <span class="fact"><b>Client</b> kofin 0.21.0</span>
+      <span class="fact"><b>Hello</b> 200</span>
+      <span class="fact"><b>Available now</b> L22 · TAB · WEB</span>
+      <span class="fact"><b>6 defects</b> — 2 fixed &amp; verified, 4 open</span>
+    </div>
+  </header>
+
+  <nav aria-label="Contents">
+    <ol>
+      <li><a href="#gate0"><span class="n">0</span><span class="blocking">Output truth</span></a></li>
+      <li><a href="#rootcause"><span class="n">!</span><span class="blocking">Hot join</span></a></li>
+      <li><a href="#unpause"><span class="n">!</span><span class="blocking">Unpause</span></a></li>
+      <li><a href="#mixed"><span class="n">!</span><span class="blocking">Mixed v1/v2</span></a></li>
+      <li><a href="#results"><span class="n">R</span><span>Gate 0</span></a></li>
+      <li><a href="#rig"><span class="n">1</span><span>The rig</span></a></li>
+      <li><a href="#assets"><span class="n">2</span><span>Test assets</span></a></li>
+      <li><a href="#wanshape"><span class="n">3</span><span>Tooling</span></a></li>
+      <li><a href="#preflight"><span class="n">4</span><span>Preflight</span></a></li>
+      <li><a href="#matrix"><span class="n">5</span><span>Scenarios</span></a></li>
+      <li><a href="#transcode"><span class="n">6</span><span>Transcoding</span></a></li>
+      <li><a href="#hazards"><span class="n">7</span><span>Hazards</span></a></li>
+      <li><a href="#sequence"><span class="n">8</span><span>Sequencing</span></a></li>
+      <li><a href="#exit"><span class="n">9</span><span>Exit criteria</span></a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <!-- ============ GATE 0 ============ -->
+    <section id="gate0">
+      <h2>0 · Establish output truth</h2>
+      <p class="lede">
+        A run was observed in which both members' OSD showed near-perfect sync while the
+        actual pictures were about two seconds apart. Until that is explained, every
+        position number this system produces is a measurement of the same possibly-lying
+        quantity.
+      </p>
+
+      <div class="gate">
+        <span class="tag">Blocking — nothing downstream is believed until this passes</span>
+        <p>
+          The OSD, <code>Player.GetProperties.time</code>, the client's report to the server,
+          the group's drift estimate and the fine-sync residual all agree with each other
+          because they <strong>share a source</strong>, not because they are right. That is not a
+          detail to fold into a scenario: it is the pass/fail criterion of every other test here.
+        </p>
+      </div>
+
+      <h3>The reported position is an actuator, not a readout</h3>
+      <p>
+        This matters more than a display bug, because three separate control loops consume
+        that number and act on it:
+      </p>
+      <ul>
+        <li><code>PlaybackController.estimate_position_ms</code> compares the group estimate against <code>player.getTime()</code>;</li>
+        <li><code>PulseScheduler</code> builds its 3&nbsp;s median residual window from the same number and issues rate pulses to close it;</li>
+        <li>the server's <code>WaitingGroupState</code> computes <code>delayTicks</code> from the position the client <em>reports</em>, and <code>CorrectionPolicy.CannotConverge</code> decides from that whether to keep seeking or hand the member to a rendezvous.</li>
+      </ul>
+      <div class="alarm">
+        <span class="tag">Consequence</span>
+        <p>
+          A member whose reported position is biased by +2&nbsp;s is not merely mis-displayed.
+          It will be actively driven two seconds <em>away</em> from the group by the controller
+          that believes it is closing the gap — and the server will watch its corrections
+          "converge" onto the wrong place and stop correcting.
+        </p>
+      </div>
+
+      <h3>Three candidate mechanisms</h3>
+      <p>All measurable; none decidable from logs, because logs only ever quote the suspect number.</p>
+
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr><th>Mechanism</th><th>Where it comes from</th><th>Plausible magnitude</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>(a) Segment-boundary landing</strong></td>
+              <td>A seek on an HLS transcode lands on a segment boundary, not where it was asked. The engine says so itself in <code>CorrectionPolicy.cs</code> and <code>WaitingGroupState.cs:471</code>. If the client reports the position it <em>requested</em> while playing the segment it <em>got</em>, the OSD is wrong by up to one segment.</td>
+              <td class="num">3–6 s<br><span style="color:var(--ink-mute)">brackets the ~2 s seen</span></td>
+            </tr>
+            <tr>
+              <td><strong>(b) Queue-depth accounting</strong></td>
+              <td><code>inputstream.tempo</code> reports at the playing point by subtracting the stamped <code>queue_secs</code>. <code>TempoSession</code> publishes that <em>once</em> at group join, and every later play is stamped with it. <code>OMEGA_QUEUE_SECS = 8.0</code> is the fallback whenever the RPC read fails — so a transient failure on a Kodi 22 box subtracts 8 s against a 1 s queue.</td>
+              <td class="num">up to 7 s<br><span style="color:var(--ink-mute)">silent</span></td>
+            </tr>
+            <tr>
+              <td><strong>(c) Output latency</strong></td>
+              <td>Audio sink buffering, HDMI passthrough to an AVR, and the Bravia's own picture processing all delay what you see and hear relative to what Kodi's clock says. Invisible to every position API.</td>
+              <td class="num">100–500 ms+</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Three channels, in trust order</h3>
+      <p>
+        Every later scenario states pass/fail in channel-1 or channel-2 terms and records the
+        reported-position number <em>alongside</em>, as a second measurement.
+        Where the two disagree, the disagreement is the finding.
+      </p>
+
+      <div class="channels">
+        <div class="ch">
+          <span class="rank">Trust 1 — arbiter</span>
+          <h4>Camera, both panels in one frame</h4>
+          <p>Two devices side by side playing the timecode asset; one photo containing both burned-in timecodes. Frame-exact and unfalsifiable — and it is the thing actually complained about. Manual, so it validates the other two rather than doing the work.</p>
+        </div>
+        <div class="ch">
+          <span class="rank">Trust 2 — the detector</span>
+          <h4>Screenshot + OCR</h4>
+          <p>OCR the burned-in timecode out of a Kodi screenshot and diff it against <code>Player.GetProperties.time</code> sampled at the same instant on the same device. Needs no camera, no second device, no group — so it runs as preflight everywhere and as a watchdog inside long runs.</p>
+        </div>
+        <div class="ch">
+          <span class="rank">Trust 3 — what you hear</span>
+          <h4>Audio cross-correlation</h4>
+          <p>One recorder, both devices audible, cross-correlate the asset's 1&nbsp;Hz beeps. Sub-millisecond, and it measures sound rather than frames — the only channel that catches sink and passthrough latency.</p>
+        </div>
+      </div>
+
+      <h3>The detector, precisely</h3>
+      <p>This is the answer to <em>“some way of being able to detect this”</em>:</p>
+<pre><code>bias_ms = reported_position_ms − ocr_timecode_ms</code></pre>
+      <p>
+        That single number <strong>is</strong> the lie. Measure it per device, per playback path.
+      </p>
+
+      <div class="note">
+        <p>
+          <strong>Prove the channel before trusting it.</strong> On some platforms a Kodi screenshot
+          contains the GUI layer without the video surface, or the reverse. Verify per device that a
+          screenshot of a playing timecode clip actually contains a readable timecode — at Kodi 21 and 22,
+          direct play and transcode, with and without <code>inputstream.tempo</code> in the path. Any device
+          where it does not falls back to channel 1 for that path and is recorded as such. The debug overlay
+          must be off.
+        </p>
+      </div>
+
+      <div class="scroll">
+        <table>
+          <caption>Calibration matrix — bias_ms per cell</caption>
+          <thead><tr><th>Path</th><th>Why it can differ</th></tr></thead>
+          <tbody>
+            <tr><td class="id">DirectPlay, no tempo</td><td>the baseline; should be output latency only</td></tr>
+            <tr><td class="id">DirectStream + tempo</td><td>the <code>queue_secs</code> correction is in force</td></tr>
+            <tr><td class="id">DirectStream, mid-pulse</td><td>the correction during a rate excursion</td></tr>
+            <tr><td class="id">Transcode</td><td>segment-boundary landing — hypothesis (a)</td></tr>
+            <tr><td class="id">…each, after a seek</td><td>the landing error is the suspect</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>Gate 0 exit</h4>
+      <ol>
+        <li>Channel 2 proven to capture video on each device/path, or recorded as unavailable there.</li>
+        <li><code>bias_ms</code> measured for every device × path cell, with its spread over ≥ 10 samples.</li>
+        <li>Channels 1 and 2 agree within one frame (~42 ms) on at least one cell per device.</li>
+        <li><strong>The ~2 s observation reproduced and attributed</strong> to (a), (b), (c) or something else. If it will not reproduce, its conditions are recorded and it stays open with the watchdog armed.</li>
+        <li>A bias watchdog exists — a periodic screenshot+OCR check any run can enable, alarming when <code>bias_ms</code> leaves its calibrated band.</li>
+      </ol>
+      <p>
+        If <code>bias_ms</code> is non-zero and <em>stable</em>, apply it to every reported position before
+        comparing members. If it is non-zero and <em>unstable</em>, fine sync cannot be trusted to close
+        anything on that path — and that is a finding with more weight than any scenario below.
+      </p>
+    </section>
+
+
+
+    <!-- ============ ROOT CAUSE ============ -->
+    <section id="rootcause">
+      <h2>Root cause — hot join doubles the joiner's start position</h2>
+      <p class="lede">
+        Reproduced on the reported configuration: Bravia playing, Pixel cold-joining, AV1 content.
+        Root-caused to one line. Detail in <code>docs/hotjoin-position-doubling.md</code>.
+      </p>
+
+      <div class="alarm">
+        <span class="tag">Confirmed defect</span>
+        <p>
+          A member cold-joining a Playing group is told to start at
+          <strong>group position + elapsed-since-the-queue-last-changed</strong>. Because the queue is
+          normally set at position 0, that is almost exactly <strong>double</strong> the real position.
+          The joiner then cuts backwards by the difference.
+        </p>
+      </div>
+
+      <div class="scroll">
+        <table>
+          <thead><tr><th class="num">Group had played</th><th class="num">Joiner started at</th><th class="num">Error</th></tr></thead>
+          <tbody>
+            <tr><td class="num">11.2 s</td><td class="num">27.0 s</td><td class="num">~16 s</td></tr>
+            <tr><td class="num">271.6 s</td><td class="num">546.0 s</td><td class="num">~274 s</td></tr>
+            <tr><td class="num">283.9 s</td><td class="num">570.0 s</td><td class="num">~286 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        The 11 s run is the discriminator: the error tracks elapsed-since-queue-change, not the position,
+        so this is not a fixed factor of two. <code>syncwatch</code> caught the long case live as
+        <code>DIVERGE BRV vs PXL: -274423ms</code>.
+      </p>
+
+      <h3>The two halves disagree about which instant they describe</h3>
+      <p>
+        <strong>Server</strong> (<code>Group.cs :: GetPlayQueueUpdate</code>) extrapolates
+        <code>StartPositionTicks</code> to <em>now</em>, but stamps the update with
+        <code>PlayQueue.LastChange</code> — when the <em>queue</em> last changed, which on a
+        long-running group is far in the past. This matches stock Jellyfin, so it is not a plugin
+        divergence.
+      </p>
+      <p>
+        <strong>Client</strong> (<code>kofin :: _apply_play_queue</code>) pairs the two and
+        extrapolates forward from <code>LastUpdate</code>, adding the whole elapsed playback a second
+        time:
+      </p>
+<pre><code># Position reference: extrapolate from LastUpdate while playing.
+reference_ms = last_update if last_update is not None else self.server_now_ms()
+self.playback.set_reference(start_ticks, reference_ms, is_playing)</code></pre>
+
+      <div class="note">
+        <p>
+          <strong>The fix is the fallback already on that line.</strong> The position is extrapolated to
+          send time, so its reference instant is <em>now</em>; <code>LastUpdate</code> belongs to the
+          queue-version dedup done twenty lines earlier, which is untouched by the change.
+        </p>
+      </div>
+<pre><code>reference_ms = self.server_now_ms()</code></pre>
+
+      <h3>Why it self-heals, and why that is not enough</h3>
+      <p>
+        <code>PositionBeacon</code> (5 s) and every command carry a correctly paired position and
+        <code>When</code>, so the member converges within seconds — measured settled state after the hot
+        join is <strong>+36 ms screen-to-screen, with the API agreeing</strong>. What the viewer sees in
+        between is the joiner starting far ahead and then cutting back by 15 s, or 274 s, or landing past
+        the end of shorter content.
+      </p>
+
+      <h3>Which paths reach it</h3>
+      <ul>
+        <li><strong>Cold hot join</strong> — the reported case, joiner not already playing.</li>
+        <li><strong>Rendezvous</strong> — routes through <code>BeginHotJoin</code> and the same snapshot path.</li>
+        <li>Any snapshot applied while <code>phase == "loading"</code>, where <code>_apply_snapshot</code> returns early and leaves the start position to the queue path.</li>
+        <li><strong>Not</strong> a re-join while already playing the same item — that takes the adopt branch. Measured <code>landed 230.3s, wanted 230.4s (-42ms)</code>.</li>
+      </ul>
+    </section>
+
+
+    <!-- ============ UNPAUSE ============ -->
+    <section id="unpause">
+      <h2>Fix 2 — the unpause cut fine sync could have nudged</h2>
+      <p class="lede">
+        Reported as "skips smaller in magnitude than the fine sync threshold, particularly when
+        un-pausing". Confirmed, root-caused to an asymmetry inside one file, fixed and measured.
+      </p>
+
+      <div class="alarm">
+        <span class="tag">Confirmed defect</span>
+        <p>
+          The unpause path seeked for anything past <code>UNPAUSE_ALIGN_MS</code> (100&nbsp;ms) —
+          <strong>twice</strong>, once at arm time and once at the resume — while
+          <code>_align_after_resume</code>, on the other side of the same resume, handed any residual
+          inside the pulse budget to fine sync instead: <em>"a skip is for gross errors"</em>. So a
+          few-hundred-millisecond offset got a visible cut on the way in that would have been smoothed
+          on the way out.
+        </p>
+      </div>
+
+      <h3>The fix</h3>
+      <p>
+        Apply the rule the file already had to both aligns on the way in, gated on
+        <code>tempo.can_close()</code>. That gate is already correct as it stands: the scheduler drops
+        its tempo file both when an item is not routed through <code>inputstream.tempo</code> and when a
+        pulse is not confirmed, so it answers False exactly when nothing can be nudged — an unrouted
+        item still seeks.
+      </p>
+      <p>
+        Only in the <code>synced</code> phase. A <code>waiting_ready</code> start — a barrier restart or
+        a hot join — is the one chance to begin exactly on the group position, and its offsets are the
+        large ones (1.0–1.7&nbsp;s measured); handing those to the scheduler would trade one cut for
+        twenty seconds off-rate.
+      </p>
+
+      <h3>Measured, four pause/unpause cycles</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Member</th><th class="num">Offsets at unpause</th><th>Before</th><th>After</th></tr></thead>
+          <tbody>
+            <tr><td class="id">BRV</td><td class="num">-161, -178, -305, -236 ms</td><td>two seeks each</td><td>left to fine sync</td></tr>
+            <tr><td class="id">PXL</td><td class="num">-168, -202, -210, -255 ms</td><td>two seeks each</td><td>left to fine sync</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Every offset was past the 100&nbsp;ms threshold and well inside the 5&nbsp;s pulse budget. The
+        pulses closed them accurately — <code>moved -84ms (wanted -78ms)</code>,
+        <code>moved -97ms (wanted -85ms)</code> — and the screens sat <strong>+85&nbsp;ms apart</strong>
+        afterwards with no cut at all.
+      </p>
+      <div class="note">
+        <p>
+          <strong>No regression on the start path.</strong> A cold hot join still seeks:
+          <code>[ syncplay/align ] +1179ms to the start position</code>, both members landing at
+          104.2&nbsp;s. Worth noting the offsets are consistently <em>negative</em> (~-200&nbsp;ms) on
+          both devices — members sit slightly ahead of the scheduled start position at unpause, which is
+          a systematic effect of the pause-time spread rather than drift.
+        </p>
+      </div>
+    </section>
+
+
+    <!-- ============ MIXED V1/V2 ============ -->
+    <section id="mixed">
+      <h2>R-G — what a real v1 client found</h2>
+      <p class="lede">
+        Run with jellyfin-web (Firefox, 10.11.11) joining a live Bravia + Pixel group. This one
+        group produced <strong>three server-side defects</strong> that nothing else in the exercise
+        could have surfaced, and all three needed a genuine v1 client rather than a synthetic one.
+      </p>
+
+      <div class="alarm">
+        <span class="tag">Three defects, and they compound</span>
+        <p>
+          Defect 1 sets the flag that lets defect 2 wipe the member's explicit opt-out, and defect 3
+          means nothing was ever going to pull it back. Observed end state: the group believed all
+          three members were synchronised participants while one sat <strong>217 s away</strong>.
+        </p>
+      </div>
+
+      <h3>1 — rendezvous is not gated on the member's protocol version</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Path</th><th>Gate</th><th>Correct?</th></tr></thead>
+          <tbody>
+            <tr><td><code>SyncPlayManagerV2.cs:761</code> (wait timeout)</td><td><code>group.IsV2Member(session.Id) &amp;&amp; HotJoin != false</code></td><td>yes</td></tr>
+            <tr><td><code>WaitingGroupState.cs:483</code> (correction)</td><td><code>context is IGroupStateContextV2</code></td><td><strong>no</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        The second tests whether the <em>group</em> is a v2-capable context — always true with this
+        plugin — not whether the <em>member</em> is v2. It reaches
+        <code>BeginHotJoin</code> &rarr; <code>SendWireUpdate(session, "StateSnapshot", …)</code>, and
+        <code>SendWireUpdate</code> (<code>Group.cs:556</code>) has <strong>no</strong> version check,
+        unlike <code>ResyncSession</code> (583) and the beacon (680). So a v1 client is sent a v2-only
+        message, against spec §2 and the coexistence guarantee the shadowed-manager architecture rests
+        on. It also bypasses the <code>HotJoin</code> config gate the other path honours.
+      </p>
+      <p>
+        <strong>Intermittent:</strong> <code>CorrectionPolicy</code> always grants the first correction
+        (<code>attempts &lt; 2</code>), so this is reached only when a v1 client needs a second one.
+        Join #1 did; join #2 did not.
+      </p>
+
+      <h3>2 — an explicit IgnoreWait is silently cleared</h3>
+<pre><code>if (!isBuffering &amp;&amp; value.IgnoredByTimeout)
+{
+    value.IgnoredByTimeout = false;
+    value.IgnoreGroupWait = false;   // clears the member's *explicit* choice too
+}</code></pre>
+      <p>
+        One field carries two meanings — "the group gave up on you"
+        (<code>BeginHotJoin</code>, <code>MarkIgnoredByTimeout</code>,
+        <code>SetMemberDisconnected</code>) and "you asked not to be waited for"
+        (<code>SetIgnoreWait</code>) — so clearing the first clears the second. Watched happen three
+        times; the clearest was a member shown <code>[buffering spectator]</code> at 17:03:12 and
+        <code>[buffering]</code> at 17:03:14, wiped inside two seconds.
+      </p>
+
+      <h3>3 — a member adrift while the group is Playing is never corrected</h3>
+      <p>
+        Corrections live in <code>WaitingGroupState</code>, so none fire while the group plays. A v2
+        member self-corrects from the 5 s <code>PositionBeacon</code>; a <strong>v1 member has
+        neither</strong>, so once adrift it stays adrift. Measured: web client at 155.0 s against both
+        Kodi members at 372.5 s, with zero corrections logged across the gap.
+      </p>
+
+
+      <h3>A v1 member's real on-screen offset</h3>
+      <div class="alarm">
+        <span class="tag">A separate finding — not the reported hot-join case</span>
+        <p>
+          Capturing the jellyfin-web window and OCRing the burned-in timecode — interleaved so the
+          web client's screen position is interpolated to the instant the Bravia's frame was taken —
+          the web client sits <strong>2363 ms behind on screen</strong> while the API reports the gap
+          as <strong>~1.1 s</strong>. Stable across samples: −2363, −2390, −2272 ms.
+        </p>
+      </div>
+      <p>
+        Two things compound. jellyfin-web reports position on a <strong>~3 s cadence</strong>
+        (<code>421.0, 424.0, 428.0, 430.758967…</code> — repeated values), so any single read is up to
+        a report interval stale and understates the gap. And nothing closes it: corrections live in
+        <code>WaitingGroupState</code>, and a v1 member has no <code>PositionBeacon</code> to
+        self-correct from — so the offset is <em>fixed</em> rather than drifting, which is exactly how
+        it was described from the sofa.
+      </p>
+      <p>
+        A constant gap that nothing corrects, under-reported by the only number a viewer can see.
+        It shares the ~2 s magnitude with the originally reported case but is not the same thing:
+        that report was Bravia joined by Pixel on AV1 over a hot join, kofin only, and is attributed
+        to the hot-join position doubling fixed in <code>eeac6ee</code>.
+      </p>
+
+      <div class="note">
+        <p>
+          <strong>And the standing cost of a mixed group:</strong> hot join is v2-only, so every v1
+          join takes the classic barrier. The v2 members paused 3.2 s on one join and 9.7 s on
+          another, bounded by the 10 s <code>GroupWaitTimeout</code>. Not a defect — the price of
+          coexistence, and worth stating plainly.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ RESULTS ============ -->
+    <section id="results">
+      <h2>Gate 0 — results, 26 Aug</h2>
+      <p class="lede">
+        Run against minipie 10.11.11 / plugin 10.11.0.4 / kofin 0.21.0, with L22 and TAB on the
+        10-minute h264 timecode asset. Full detail in <code>docs/shakedown-gate0-results.md</code>.
+      </p>
+
+      <div class="gate">
+        <span class="tag">Verdict — partially passed</span>
+        <p>
+          The output-truth channel is established and calibrated on both available devices.
+          <strong>The ~2 s divergence did not reproduce in any configuration tested</strong> — the worst
+          steady-state disagreement measured is 275 ms. But the mechanism that would produce it is
+          confirmed present, and it grows with the transcode path and with a seek.
+        </p>
+      </div>
+
+      <h3>Screen vs API, measured</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Configuration</th><th class="num">On screen</th><th class="num">API says</th><th class="num">Disagreement</th></tr></thead>
+          <tbody>
+            <tr><td>both DirectStream + fine sync</td><td class="num">-195 ms</td><td class="num">-335 ms</td><td class="num">+139 ms</td></tr>
+            <tr><td>L22 DirectStream+tempo, TAB <strong>Transcode</strong></td><td class="num">-75 ms</td><td class="num">-350 ms</td><td class="num">+275 ms</td></tr>
+            <tr><td>same, immediately after a group seek</td><td class="num">-416 ms</td><td class="num">-687 ms</td><td class="num">+271 ms</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Per-device bias (reported &minus; screen) is <strong>-264 ms</strong> on L22 and
+        <strong>-384 ms</strong> on TAB, so the direct/direct case is predicted at +120 ms and measured
+        at +139 ms. <strong>The transcode adds roughly a further 135 ms.</strong> The transient at the
+        seek reached <strong>-1225 ms</strong> before settling — caught live by <code>syncwatch</code>,
+        not found afterwards in a log.
+      </p>
+
+      <div class="note">
+        <p>
+          <strong>kofin already knows the transcode lands off.</strong> The seek made it explicit on the
+          transcoding member: <code>[ syncplay/landed ] 420.3s, wanted 420.0s (+320ms) transcoding</code>
+          then <code>[ syncplay/align ] -317ms carried: transcoding</code>. It measures the landing error
+          and <em>carries</em> it rather than re-seeking — reasonable, since a second seek lands somewhere
+          else again. That carried offset is real displacement the reported position never shows, and it
+          is the confirmed contributor behind the +275 ms.
+        </p>
+      </div>
+
+      <h3>What the channel actually needed</h3>
+      <ul>
+        <li><strong>Kodi's own screenshot is unusable on L22</strong> — <code>CCaptureService::Fail ... capture request failed (content 0, 0x0)</code>, reproducibly. Capture has to come from outside Kodi: <code>import -window</code> on X11 (~140-210 ms), <code>adb screencap</code> raw on Android (~500 ms; the <code>-p</code> PNG encode more than doubles it).</li>
+        <li><strong>min(R,G,B), not greyscale.</strong> The timecode is white over saturated colour bars; greyscale makes the bars light and every threshold blew the crop to white. Min-channel survives only where all three channels are high.</li>
+        <li><strong>tesseract returns nothing on a clean crop that runs to the image edge</strong> — it reads perfectly once a white border is added.</li>
+        <li><strong>Two false readings before the estimator was right</strong>: +500 ms (OCR inside the timed bracket — exactly half the ladder's runtime) and +985 ms (fetch inside it). Where in the capture call the frame is sampled was then <em>measured</em>, by running one device at two window sizes: the start model agrees to 16 ms, the midpoint model disagrees by 359 ms.</li>
+      </ul>
+
+      <h3>Incidental findings</h3>
+      <ul>
+        <li><strong>Two sessions per device, one of them inert.</strong> kofin authenticates as <code>Client="Kofin"</code>. A REST call with <code>Client="Kodi"</code> and the same token creates a second, websocket-less session: the group forms, the server advances Idle&rarr;Waiting&rarr;Playing, and no client hears a word. Silent from the server side. <code>spgroup members</code> now prints which session groups reach.</li>
+        <li><strong>The wait-timeout path fired for real</strong> while that was happening — both inert members went <code>IsBuffering=true, IgnoreGroupWait=true</code> and the group played on without them. D6 behaviour, observed by accident.</li>
+        <li><strong>Real pings are 1-34 ms, not 0</strong>, so the <code>Math.Max(delayTicks, DefaultPing)</code> unit bug does not bite on this LAN. Members do start at the <code>Ping = 500</code> default until time sync runs.</li>
+        <li><strong>TAB's clock offset is -523.9 ms</strong> against the server (stable, rtt 3.9 ms); L22's is -3.9 ms. Being absorbed correctly — but TAB's whole group estimate rests on that one measurement.</li>
+        <li><strong>F5 passed incidentally</strong>: queue 4.0&rarr;1.0 s at join, back to 40 with an empty restore record at leave.</li>
+        <li><code>adb shell grep 'a\|b'</code> <strong>silently matches nothing</strong> — cost a wrong conclusion that a single-pattern re-run reversed.</li>
+      </ul>
+
+      <h3>Where the 2 s is most likely to be</h3>
+      <ol>
+        <li><strong>The Bravia's 16 s queue.</strong> Both tested devices run 4.0 s natively. The <code>queue_secs</code> correction there is four times larger, and <code>OMEGA_QUEUE_SECS = 8.0</code> is the silent fallback whenever the RPC read fails.</li>
+        <li><strong>A worse transcode landing error.</strong> +320 ms on a LAN with a fast server scales directly with segment length and encode-start time.</li>
+        <li><strong>A slow link</strong> — <code>wanshape</code> is built and verified but has not yet been pointed at a member.</li>
+      </ol>
+    </section>
+
+    <!-- ============ RIG ============ -->
+    <section id="rig">
+      <h2>1 · The rig</h2>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>ID</th><th>Device</th><th>Kodi</th><th>Role</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td class="id">L22</td><td>this box, flatpak <code>tv.kodi.Kodi</code></td><td class="num">22.0~b1 Piers</td><td>primary local member</td><td><span class="pill now">now</span></td></tr>
+            <tr><td class="id">L21</td><td>this box, Debian package</td><td class="num">21.3 Omega</td><td>Kodi 21 arm — 8 s queue, no short-queue path</td><td><span class="pill now">now</span></td></tr>
+            <tr><td class="id">TAB</td><td>Galaxy Tab S5e (SM-T720), Android 13</td><td class="num">22</td><td>second member · ADB <code>192.168.1.150:42753</code></td><td><span class="pill now">attached</span></td></tr>
+            <tr><td class="id">BRV</td><td>Bravia Android TV</td><td class="num">22</td><td>16 s native queue, picture processing</td><td><span class="pill wait">when available</span></td></tr>
+            <tr><td class="id">PXL</td><td>Pixel 7 Pro</td><td class="num">22</td><td>AV1 decoder regression target</td><td><span class="pill wait">when available</span></td></tr>
+            <tr><td class="id">WEB</td><td>jellyfin-web via Caddy</td><td>—</td><td><strong>the v1 member</strong></td><td><span class="pill now">always</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        L21 and L22 share a display and a JSON-RPC port, so the Kodi 21 arm is a separate pass,
+        not a concurrent member.
+      </p>
+      <div class="note">
+        <p>
+          <strong>WEB is not optional.</strong> Constraint 2 of the whole design is that one group holds
+          v1 and v2 members at once, and hot join and rendezvous are v2-only paths with deliberate v1
+          fallbacks. A group without a v1 member never tests the asymmetry.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ ASSETS ============ -->
+    <section id="assets">
+      <h2>2 · Test assets</h2>
+      <p class="lede">
+        The server's <code>VideoCodecs</code> filter was verified non-functional on this deployment —
+        <code>av1</code>, <code>hevc</code> and <code>h264</code> all return the same 6&nbsp;297 items — so codec
+        coverage cannot come from the existing library. The codec under test has to be known, not searched for.
+      </p>
+      <p>
+        Build one timecode clip per codec, extending the recipe already used for the drift gate: burned-in
+        <code>%{pts\:hms}</code> plus frame counter, a 1&nbsp;Hz beep, and <strong>23.976 fps</strong> —
+        deliberately, because it is what real films are and the rate with no matching mode on a 60&nbsp;Hz panel.
+      </p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Asset</th><th>Video</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td class="id">Timecode H264</td><td>libx264 High/L4.0 yuv420p</td><td>direct play everywhere; the control</td></tr>
+            <tr><td class="id">Timecode HEVC</td><td>libx265 Main/Main10</td><td>direct play on the Android boxes, transcode target elsewhere</td></tr>
+            <tr><td class="id">Timecode AV1</td><td>libsvtav1</td><td>the PXL decoder regression cell</td></tr>
+            <tr><td class="id">Transcode bait</td><td>H264 in a rejected container/profile</td><td>forces a server transcode without <code>force_transcode</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Stereo AAC on all four so audio never becomes the variable; keep one HEVC/TrueHD title for the
+        passthrough arm of channel 3. The burned-in timecode is what makes channels 1 and 2 possible at all,
+        so every run below uses these assets rather than library content.
+      </p>
+    </section>
+
+    <!-- ============ WANSHAPE ============ -->
+    <section id="wanshape">
+      <h2>3 · Tooling</h2>
+      <h3>3.1 · wanshape — the WAN proxy</h3>
+      <p class="lede">
+        A layer-4 TCP proxy. Point <em>one</em> member's <code>serverAddress</code> at it and that member alone
+        becomes remote; the rest of the group keeps its LAN. Built and verified — <code>tools/wanshape.py</code>.
+      </p>
+      <p>
+        Layer 4 rather than an HTTP proxy because kofin's control channel (the SyncPlay websocket) and its
+        media channel (the range/HLS GETs) are the same host and port, and the websocket stops looking like
+        HTTP after the upgrade. Forwarding bytes shapes both with nothing to parse. Not <code>tc netem</code>,
+        which shapes a whole interface — it cannot make one member remote while its group stays local — and
+        which needs root an unrooted Android TV does not offer.
+      </p>
+<pre><code>tools/wanshape.py --listen 0.0.0.0:8099 --target 192.168.1.167:8096 \
+                  --control 127.0.0.1:8098 --rtt 300 --down 3000
+
+tools/wanshape.py --send 'stall 12'       # hold data, sockets stay up
+tools/wanshape.py --send 'blackhole 120'  # cut connections, refuse new ones
+tools/wanshape.py --send 'down 800'
+tools/wanshape.py --send status</code></pre>
+
+      <h3>Two injectors, because the engine has two paths</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Injector</th><th>What survives</th><th>Engine path it drives</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="id">stall N</td>
+              <td>session and websocket stay up; data held</td>
+              <td>member reports Buffering → group waits → <code>GroupWaitTimeout</code> (10 s) → <strong>rendezvous on timeout</strong></td>
+            </tr>
+            <tr>
+              <td class="id">blackhole N</td>
+              <td>connections aborted, new ones refused</td>
+              <td>socket dies with no close → <code>SocketLiveness</code> (60 s) → <code>DisconnectedGracePeriod</code> (90 s) → reconnect snapshot</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Measured on this rig</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Behaviour</th><th class="num">Result</th></tr></thead>
+          <tbody>
+            <tr><td><code>--rtt 300</code></td><td class="num">0.0027 s → 0.307 s per request</td></tr>
+            <tr><td><code>--rtt 400</code></td><td class="num">0.0057 s → 0.406 s · payload byte-identical</td></tr>
+            <tr><td><code>down 2000</code> (target 250 000 B/s)</td><td class="num">249 414 B/s — 0.2 % error</td></tr>
+            <tr><td><code>stall 5</code> mid-transfer</td><td class="num">0.975 s → 5.716 s · HTTP 200, socket survived</td></tr>
+            <tr><td><code>blackhole 3</code></td><td class="num">curl exit 56 (reset) · clean recovery</td></tr>
+            <tr><td>connection accounting</td><td class="num">conns returns to 0 · no leak</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">
+        <p>
+          The proxy speaks plain TCP to <code>192.168.1.167:8096</code>, so a shaped member bypasses Caddy
+          and TLS. Run the Caddy path unshaped as its own arm rather than mixing the two.
+        </p>
+      </div>
+
+      <h3>3.2 · syncwatch — watching a run live</h3>
+
+      <div class="alarm">
+        <span class="tag">Discipline, not tooling</span>
+        <p>
+          <strong>A run is watched, not autopsied.</strong> The ~2 s divergence in Gate 0 survived an entire
+          session precisely because everything was read back from logs afterwards — by which time the only
+          surviving evidence was the number that was lying. Every scenario below runs with
+          <code>syncwatch</code> attached and its events in front of you, not started alongside the run and
+          read at the end.
+        </p>
+      </div>
+
+      <p>
+        It samples every member over JSON-RPC and the server over <code>/SyncPlay/List</code>, reconciles them,
+        and emits a line the moment anything is worth knowing. Every sample also goes to JSONL for the
+        post-mortem; stdout carries only events.
+      </p>
+<pre><code>tools/syncwatch.py \
+    --server http://192.168.1.167:8096 --token-from &lt;settings.xml&gt; \
+    --member L22=127.0.0.1:8080 \
+    --member TAB=192.168.1.150:8080,adb=192.168.1.150:42753,bias=-180 \
+    --tolerance 250 --jsonl run.jsonl --ocr '&lt;ocr command for {member}&gt;'</code></pre>
+
+      <p>Three properties make it usable <em>during</em> a run rather than after one:</p>
+      <div class="channels">
+        <div class="ch">
+          <span class="rank">Property 1</span>
+          <h4>Silence is never success</h4>
+          <p>A heartbeat is emitted on a fixed interval regardless of activity, so a dead poller, a hung Kodi
+          and a healthy quiet group cannot look the same. This is exactly the failure mode of a plain
+          background shell, and the reason one is not good enough here.</p>
+        </div>
+        <div class="ch">
+          <span class="rank">Property 2</span>
+          <h4>Every terminal state emits</h4>
+          <p><code>LOST</code> when a member stops answering, <code>SERVER</code> when the group list errors,
+          <code>STATE</code> on any transition. A watcher that reports only good news is indistinguishable
+          from a watcher that has died.</p>
+        </div>
+        <div class="ch">
+          <span class="rank">Property 3</span>
+          <h4>It carries the Gate 0 channel</h4>
+          <p><code>--ocr</code> reads the burned-in timecode back off a screenshot and reports
+          <code>BIAS</code> whenever a member's reported position drifts from what its own screen shows. Had
+          it been running, the ~2 s would have announced itself instead of being spotted by eye.</p>
+        </div>
+      </div>
+
+      <p>
+        Event kinds: <code>START</code> <code>STATE</code> <code>GROUP</code> <code>DIVERGE</code>
+        <code>INBAND</code> <code>BIAS</code> <code>OCR?</code> <code>LOST</code> <code>BACK</code>
+        <code>SERVER</code> <code>HB</code> <code>STOP</code>. A calibrated <code>bias=&lt;ms&gt;</code> per
+        member is subtracted before members are compared; the raw figure stays in the JSONL.
+      </p>
+      <p>
+        Verified on this rig: members reachable and unreachable, server reachable, heartbeat, JSONL, and the
+        <code>LOST</code> path on a deliberately dead member.
+      </p>
+    </section>
+
+    <!-- ============ PREFLIGHT ============ -->
+    <section id="preflight">
+      <h2>4 · Preflight, per device</h2>
+      <ol>
+        <li><strong><code>inputstream.tempo</code> ≥ x.4.1.</strong> Below that the add-on drops the first packets after a seek — the cause of the PXL AV1 wedge — and <code>TempoSession.begin()</code> refuses to arm. Confirm from the log that fine sync <em>armed</em>, rather than silently declining.</li>
+        <li><strong><code>videoplayer.usedisplayasclock</code> OFF.</strong> The drift gate measured up to +42 763 ppm of rate error with it on (4.3 % on the Bravia — the PAL speed-up), against a few hundred ppm free-running with it off. Fine sync's give-up path exists for exactly this and will fire.</li>
+        <li><strong>Record <code>videoplayer.queuetimesize</code> before and after</strong> — 40 (4.0 s) on desktop and Tab, 160 (16.0 s) on the Bravia. Check <code>syncPlayQueueRestore</code> is empty at start; a non-empty one means a previous session died mid-run. This is hypothesis (b)'s primary evidence.</li>
+        <li>Debug logging on, on-screen overlay <strong>off</strong> — the overlay corrupts channel 2.</li>
+        <li>Screen-off timeouts longer than the run, screensaver <code>None</code>, and on Android <code>svc power stayon true</code> while charging. Record and restore.</li>
+        <li>Same Jellyfin user on every member for the whole exercise — user-level playback settings change the transcode decision.</li>
+        <li>Note PXL thermals; an hour of AV1 will throttle it, and that is a real-world condition, not an artefact.</li>
+        <li><strong><code>syncwatch</code> running and its events visible before the scenario starts</strong> — not started alongside it, and never left to be read back at the end.</li>
+      </ol>
+    </section>
+
+    <!-- ============ MATRIX ============ -->
+    <section id="matrix">
+      <h2>5 · Scenario matrix</h2>
+      <p class="lede">
+        Every cell is run with <strong>syncwatch attached and watched live</strong>, and records the channel-1/2 offset (truth), the reported offset (the API),
+        <code>bias_ms</code>, and the relevant log lines from both sides. A cell where truth and report
+        disagree is a failure <em>even if the reported number looks perfect</em>.
+      </p>
+
+      <h3>R-A · Group formation from each starting state</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>ID</th><th>Starting state</th><th>What it exercises</th></tr></thead>
+          <tbody>
+            <tr><td class="id">A1</td><td>nothing playing, group created</td><td><code>IdleGroupState</code>; queue proposal from empty</td></tr>
+            <tr><td class="id">A2</td><td><strong>video playing</strong>, group created</td><td>The running item is <strong>not</strong> routed through <code>inputstream.tempo</code> — the route is stamped at play time from <code>state.syncplay_tempo()</code>, which is empty before the join. So the first item of a group formed this way is command-only even with fine sync on. Verify it is logged; measure how much worse it syncs.</td></tr>
+            <tr><td class="id">A3</td><td><strong>video paused</strong>, group created</td><td><code>PausedGroupState</code> entry; the paused position becomes the group position</td></tr>
+            <tr><td class="id">A4</td><td>group created → member joins → play starts</td><td>the clean path; the control for A2</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        A2 is the interesting one and easy to miss: a real user gesture — <em>“we're both watching, let's sync
+        up”</em> — that silently lands on the degraded path.
+      </p>
+
+      <h3>R-B · Joining</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>ID</th><th>Scenario</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="id">B1</td><td>join an Idle group</td><td>baseline</td></tr>
+            <tr><td class="id">B2</td><td>join a Paused group</td><td></td></tr>
+            <tr><td class="id">B3</td><td><strong>hot join a Playing group</strong> (<code>HotJoin=true</code>, default)</td><td><code>BeginHotJoin</code> sets <code>IgnoreGroupWait</code> and pushes a snapshot; the joiner's <code>Ready</code> is answered by <code>CompleteHotJoin</code> with a private scheduled <code>Unpause</code> at the live position. Nobody else should pause.</td></tr>
+            <tr><td class="id">B4</td><td>same with <code>HotJoin=false</code></td><td>classic barrier; whole group waits. Config-gate regression.</td></tr>
+            <tr><td class="id">B5</td><td><strong>v1 member (WEB) hot joins</strong></td><td>must fall back to the barrier — v1 cannot be told any of it</td></tr>
+            <tr><td class="id">B6</td><td>join while another member is mid-rendezvous</td><td>two members on the hot-join path at once</td></tr>
+            <tr><td class="id">B7</td><td>rejoin the same group after leaving</td><td><code>TempoSession.begin()</code> is join-scoped, not re-join-scoped</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>R-C · Spectator mode</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>ID</th><th>Scenario</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="id">C1</td><td>→ spectator while the group plays</td><td><code>toggle_spectator</code> → <code>SetIgnoreWait</code>; the group must stop waiting on it</td></tr>
+            <tr><td class="id">C2</td><td>spectator plays its own media</td><td>its plays must <strong>not</strong> be forwarded to the group</td></tr>
+            <tr><td class="id">C3</td><td>spectator → back</td><td>re-attach; does the member get a snapshot and land correctly?</td></tr>
+            <tr><td class="id">C4</td><td><strong>toggle spectator during a hot join or rendezvous</strong></td><td><span class="pill key">suspected</span> <code>BeginHotJoin</code> sets <code>IgnoreGroupWait = true</code>; an explicit <code>SetIgnoreGroupWait(false)</code> from the user writes the same field with no knowledge of the hot join. A user coming back from spectator mid-rendezvous may clear the flag the rendezvous relies on. Provoke deliberately.</td></tr>
+            <tr><td class="id">C5</td><td>spectator when the group changes item</td><td>queue update to a member that is not following</td></tr>
+            <tr><td class="id">C6</td><td>last non-spectator leaves; all spectators</td><td>who holds the group position</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>R-D · Impaired network</h3>
+      <p>
+        The tolerance the server grants a member is <code>clamp(2 × ping, 500, 2000)</code> ms
+        (<code>Group.cs:984</code>), so an RTT sweep walks it directly:
+      </p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th class="num">Added RTT</th><th class="num">Member ping</th><th class="num">Tolerance</th><th>Cell</th></tr></thead>
+          <tbody>
+            <tr><td class="num">0 ms</td><td class="num">~0</td><td class="num">500 (floor)</td><td class="id">D1 baseline</td></tr>
+            <tr><td class="num">300 ms</td><td class="num">~150</td><td class="num">500 (still floored)</td><td class="id">D2</td></tr>
+            <tr><td class="num">1000 ms</td><td class="num">~500</td><td class="num">1000</td><td class="id">D3</td></tr>
+            <tr><td class="num">2500 ms</td><td class="num">~1250</td><td class="num">2000 (saturated)</td><td class="id">D4</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>ID</th><th>Injection</th><th>What it must do</th></tr></thead>
+          <tbody>
+            <tr><td class="id">D5</td><td><code>down</code> below the asset bitrate</td><td>member buffers → <code>BufferingGracePeriod</code> (2 s) defers the report → group waits</td></tr>
+            <tr><td class="id">D6</td><td><code>stall 12</code> — beyond the 10 s timeout</td><td><span class="pill key">key</span> <strong>rendezvous on wait timeout.</strong> Group resumes without the stalled member; the member gets a snapshot and a private scheduled <code>Unpause</code>. Per its own commit note, the only path a slow-reloading member actually reaches.</td></tr>
+            <tr><td class="id">D7</td><td><code>stall 6</code> — inside the timeout</td><td><span class="pill key">key</span> group waits and resumes normally; <strong>no</strong> rendezvous</td></tr>
+            <tr><td class="id">D8</td><td><code>blackhole 30</code></td><td>socket dies; <code>SocketLiveness</code> marks the member disconnected; reconnect inside the 90 s grace → <code>ReconnectSession</code> → snapshot</td></tr>
+            <tr><td class="id">D9</td><td><code>blackhole 120</code></td><td>grace expires → member removed. Client <code>_attempt_rejoin</code> (≥ 30 s apart) recovers cleanly.</td></tr>
+            <tr><td class="id">D10</td><td><code>rtt 800</code> + cap, 30 min</td><td>the realistic remote member; soak for divergence</td></tr>
+            <tr><td class="id">D11</td><td>shaped member <em>and</em> a transcode</td><td>the worst case: slow link plus a stream that cannot seek</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        D6 and D7 as a pair are the important ones — they bracket the timeout and prove the rendezvous
+        fires when it should and <em>only</em> when it should.
+      </p>
+
+      <div class="note">
+        <p>
+          <strong>Also check here — the ping-zero floor.</strong> On an all-LAN group every member may report
+          ping 0, and <code>WaitingGroupState.cs:540</code> floors <code>delayTicks</code> against
+          <code>DefaultPing</code>'s raw <code>500</code> — which is 500 <em>ticks</em>, 0.05 ms, not 500 ms.
+          The clamp only bites when the highest ping is 0, and then the intended 500 ms recovery grace becomes
+          0.05 ms. Record the reported ping values on a quiet LAN; if they are 0, this is reachable in normal
+          use. (Upstream Jellyfin's line, verbatim, in both 10.11 and v12 — not introduced here.)
+        </p>
+      </div>
+
+      <h3>R-E · Correction and rendezvous</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>ID</th><th>Scenario</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="id">E1</td><td>group Seek, one member slow to land</td><td>first correction always granted — <code>CannotConverge</code> is false while <code>attempts &lt; 2</code></td></tr>
+            <tr><td class="id">E2</td><td>member converging slowly but genuinely</td><td><span class="pill key">key</span> must <strong>not</strong> rendezvous: each correction closes ≥ 250 ms (<code>ProgressTicks</code>)</td></tr>
+            <tr><td class="id">E3</td><td>member not converging (transcode)</td><td><code>MaxAttempts = 3</code> or sub-250 ms progress → rendezvous, group released by <code>ResumeIfNobodyElseIsWaiting</code></td></tr>
+            <tr><td class="id">E4</td><td>member overshooting</td><td><code>CannotConverge</code> uses <code>Math.Abs</code> on both sides — overshoot by 4 s must count as failure, not progress</td></tr>
+            <tr><td class="id">E5</td><td>rendezvous with a <strong>v1</strong> member</td><td>must abandon as before (<code>MarkIgnoredByTimeout</code>), never rendezvous</td></tr>
+            <tr><td class="id">E6</td><td>both rendezvous paths in one session</td><td>the correction path and the sweep timeout path are different code with different triggers</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        E2 is the case <code>wanshape</code> makes reachable at all. Without a way to make a member
+        slow-but-converging, only the transcode failure mode gets tested and the policy's <em>negative</em>
+        case never runs.
+      </p>
+
+      <h3>R-F · Fine sync, where it is armed</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>ID</th><th>Scenario</th></tr></thead>
+          <tbody>
+            <tr><td class="id">F1</td><td>routed item: pulses close an injected residual; <code>moved</code> ≈ <code>wanted</code></td></tr>
+            <tr><td class="id">F2</td><td>deadband (75 ms) holds; no pulsing against noise</td></tr>
+            <tr><td class="id">F3</td><td>residual beyond the pulse budget (2500 ms default) → one <code>[ syncplay/align ]</code> seek, then ≤ 1 pulse</td></tr>
+            <tr><td class="id">F4</td><td>commands cut pulses (<code>cut by Pause</code>), file returns to 1.0</td></tr>
+            <tr><td class="id">F5</td><td>queue set at join, restored at leave; restore after a forced kill</td></tr>
+            <tr><td class="id">F6</td><td>give-up on a one-signed regrowing residual (turn <code>usedisplayasclock</code> on for one member)</td></tr>
+            <tr><td class="id">F7</td><td><code>inputstream.tempo</code> absent, disabled or &lt; x.4.1 → does not arm; group behaves command-only</td></tr>
+            <tr><td class="id">F8</td><td><strong>each pulse verified against channel 2</strong>, not just against <code>moved</code>/<code>wanted</code> — where Gate 0 pays off</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>R-G · Mixed v1 / v2</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>ID</th><th>Scenario</th></tr></thead>
+          <tbody>
+            <tr><td class="id">G1</td><td>WEB (v1) + kofin (v2) in one group, across all of R-A</td></tr>
+            <tr><td class="id">G2</td><td>v2-only messages (<code>StateSnapshot</code>, <code>PositionBeacon</code>) never reach WEB; no console errors</td></tr>
+            <tr><td class="id">G3</td><td>WEB drives (pause / seek / queue) and kofin follows</td></tr>
+            <tr><td class="id">G4</td><td>kofin drives and WEB follows</td></tr>
+            <tr><td class="id">G5</td><td>negotiation: registry TTL is 12 h keyed on client+device — downgrade a device to v1, confirm fallback, re-negotiate</td></tr>
+            <tr><td class="id">G6</td><td><code>PositionBeacon</code> every 5 s reaches v2 members only</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>R-H · Resilience</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>ID</th><th>Scenario</th></tr></thead>
+          <tbody>
+            <tr><td class="id">H1</td><td>kofin service restarted mid-group</td></tr>
+            <tr><td class="id">H2</td><td>Kodi force-stopped mid-group → <code>syncPlayQueueRestore</code> recovers the queue at next start</td></tr>
+            <tr><td class="id">H3</td><td>server restarted mid-group</td></tr>
+            <tr><td class="id">H4</td><td>Android standby / wake with the group running</td></tr>
+            <tr><td class="id">H5</td><td>two members leave simultaneously</td></tr>
+            <tr><td class="id">H6</td><td>group destroyed while a member is inside its disconnect grace</td></tr>
+            <tr><td class="id">H7</td><td><code>StateVersion</code> ordering — a snapshot arriving after a newer beacon must not regress state</td></tr>
+            <tr><td class="id">H8</td><td>60-minute soak, all available members, bias watchdog armed</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>R-I · Codec matrix</h3>
+      <p>Every codec × every device × {direct, transcode}, with H264 as the control.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Path</th><th>L22</th><th>L21</th><th>TAB</th><th>BRV</th><th>PXL</th></tr></thead>
+          <tbody>
+            <tr><td class="id">H264 direct</td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td class="id">HEVC direct</td><td></td><td></td><td></td><td></td><td></td></tr>
+            <tr><td class="id">AV1 direct</td><td></td><td></td><td></td><td></td><td><span class="pill key">regression</span></td></tr>
+            <tr><td class="id">any → transcode</td><td></td><td></td><td></td><td></td><td></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        The PXL/AV1 cell is a named regression: a rate change followed by a seek previously wedged its AV1
+        decoder — a <code>dequeueInputBuffer</code> storm, frozen picture with the clock running on, and a
+        watchdog reboot on the second run. Fixed add-on-side in <code>inputstream.tempo</code> 22.4.1/21.4.1.
+        Run F1 and F3 on that cell specifically and check the decoder error count is zero; the desktop's
+        post-seek <code>[hevc] Could not find ref with POC</code> errors were the same root cause and are a
+        cheaper canary.
+      </p>
+    </section>
+
+    <!-- ============ TRANSCODE ============ -->
+    <section id="transcode">
+      <h2>6 · Transcoding assessment</h2>
+
+      <div class="alarm">
+        <span class="tag">Correction to the brief</span>
+        <p>
+          <strong>Fine sync cannot currently be enabled for transcoded playback, and no setting turns it on.</strong>
+          <code>plugin.video.kofin/lib/kofin/plugin/play.py:54</code> reads
+          <code>TEMPO_METHODS = frozenset({"DirectPlay", "DirectStream"})</code>. <code>tempo_route()</code>
+          returns <code>None</code> for anything else, so no <code>inputstream.tempo</code> properties are
+          stamped, the claim carries no <code>Tempo</code>, and <code>PulseScheduler</code> never arms for that
+          item. The fine-sync doc gives the reason: the add-on's HLS path is unqualified.
+        </p>
+      </div>
+
+      <p>
+        So a transcoding member gets <strong>command-only sync</strong> — and that is the floor this exercise
+        must measure rather than assume away.
+      </p>
+
+      <div class="scroll">
+        <table>
+          <thead><tr><th>ID</th><th>Scenario</th><th>What it measures</th></tr></thead>
+          <tbody>
+            <tr><td class="id">T1</td><td>forced transcode, steady state, no commands</td><td>how far a command-only member drifts over 30 min, in channel-1/2 terms</td></tr>
+            <tr><td class="id">T2</td><td>group Seek to a transcoding member</td><td><code>reload_current_item</code> — the seek path restarts the stream at the target because an in-stream seek cannot be accurate. Measure the gap it leaves and how it closes.</td></tr>
+            <tr><td class="id">T3</td><td>load allowance convergence</td><td><code>_load_allowance_ms</code> measured ~9 s for a transcode start, EMA at 0.5, capped at 15 s. Confirm it converges within one item, and that the first item of a session is the bad one.</td></tr>
+            <tr><td class="id">T4</td><td>T3 under <code>wanshape</code></td><td>a throttled link lengthens the load, so the allowance grows — does it stay inside the cap and still aim correctly?</td></tr>
+            <tr><td class="id">T5</td><td>transcode → rendezvous</td><td>the motivating case: correction cannot converge, so the member should be rendezvoused rather than seeked repeatedly</td></tr>
+            <tr><td class="id">T6</td><td>mixed: one direct member (fine sync armed) + one transcoding member (command-only)</td><td>the realistic bad case, and the one most likely to reproduce the ~2 s complaint</td></tr>
+            <tr><td class="id">T7</td><td><strong>Gate 0 (a), specifically</strong>: does a transcoding member report the position it <em>requested</em> while playing the segment it <em>got</em>?</td><td><span class="pill key">highest value</span> the leading hypothesis for the original observation</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        <strong>T7 is the highest-value single test in this document.</strong> If it confirms, the fix is on the
+        client — report the position actually playing, not the one requested — and it also explains why the
+        server's corrections appear to converge onto the wrong place.
+      </p>
+
+      <div class="note">
+        <p>
+          <strong>The open question this exercise should answer, not assume:</strong> is extending
+          <code>inputstream.tempo</code> to the HLS path worth doing? That is a prerequisite study on the
+          add-on side, not something this shakedown can switch on. What it <em>can</em> supply is the number
+          that decides it — T1's measured command-only drift. If command-only holds a transcode inside a frame
+          or two, the extension is not worth building; if it does not, T1 is the justification.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ HAZARDS ============ -->
+    <section id="hazards">
+      <h2>7 · Known hazards</h2>
+      <ul>
+        <li><strong><code>pkill -f wanshape</code> matches the shell running it</strong> and kills your own session. Use the pidfile. (Cost a shell during development.)</li>
+        <li>JSON-RPC setting writes are <strong>not saved to disk</strong> by Kodi, so a queue shortening can survive a clean exit with no record. Check <code>syncPlayQueueRestore</code> before and after every run.</li>
+        <li>An empty <code>videoscreen.whitelist</code> (Kodi's default) disables mode switching entirely, and on Android the display mode is the platform's decision anyway — so a content/refresh mismatch is not configurable away on this hardware. Keep <code>usedisplayasclock</code> off and the question does not arise.</li>
+        <li>The debug overlay corrupts channel 2. Off before every screenshot.</li>
+        <li>PXL thermal throttling on long AV1 runs — sample <code>dumpsys thermalservice</code> alongside, and do not mistake it for a sync defect.</li>
+        <li><code>adb shell</code> escaping silently answers zero on some forms; verify each command's output rather than its exit code.</li>
+        <li>A device that blanks mid-run reads as a hung Kodi to any poller.</li>
+      </ul>
+    </section>
+
+    <!-- ============ SEQUENCE ============ -->
+    <section id="sequence">
+      <h2>8 · Sequencing</h2>
+      <ol class="phases">
+        <li><span class="ph">00</span><span><strong>Gate 0</strong> — output truth, <code>bias_ms</code>, reproduce the 2 s</span><span class="pill block">blocking</span></li>
+        <li><span class="ph">01</span><span>Assets, preflight, <code>wanshape</code> wired to TAB, <code>syncwatch</code> armed</span><span class="pill block">blocking</span></li>
+        <li><span class="ph">02</span><span>R-A, R-B, R-C on L22 + TAB + WEB</span><span></span></li>
+        <li><span class="ph">03</span><span>R-D and R-E — the rendezvous pair D6/D7 first</span><span></span></li>
+        <li><span class="ph">04</span><span>R-F and transcoding; T7 early</span><span></span></li>
+        <li><span class="ph">05</span><span>R-G mixed v1/v2</span><span></span></li>
+        <li><span class="ph">06</span><span>R-I codec matrix, as BRV and PXL become available</span><span></span></li>
+        <li><span class="ph">07</span><span>R-H resilience, ending with the H8 soak</span><span></span></li>
+      </ol>
+      <p>
+        Phases 2–5 run on what is available now — L22, TAB, WEB. BRV and PXL gate only R-I and the wider arms
+        of R-D and R-F.
+      </p>
+    </section>
+
+    <!-- ============ EXIT ============ -->
+    <section id="exit">
+      <h2>9 · Exit criteria</h2>
+      <ol>
+        <li>Gate 0 passed: output truth established, <code>bias_ms</code> known per device × path, and the ~2 s observation attributed — or explicitly left open with its conditions recorded.</li>
+        <li>Every R-A / R-B / R-C cell passes <strong>in channel-1/2 terms</strong> on at least L22 + TAB + WEB.</li>
+        <li>D6/D7 demonstrate the rendezvous fires at the wait timeout and not before; D8/D9 demonstrate the disconnect grace and rejoin.</li>
+        <li>E2 demonstrates the <em>negative</em> case — a slow but converging member is not rendezvoused.</li>
+        <li>G1–G4 pass with a v1 member present throughout.</li>
+        <li>Transcoding yields a measured command-only drift figure, and a yes/no on T7.</li>
+        <li>R-I complete for every available device, with the PXL/AV1 cell clean.</li>
+        <li>H8 soak completes with the bias watchdog quiet — and quiet is only meaningful because <code>syncwatch</code> heartbeats throughout, so a silent watcher cannot be mistaken for a synchronised group.</li>
+      </ol>
+      <p>
+        Results go to <code>plugin.video.kofin/tests/live/results/</code> alongside the existing S4.x gates.
+        Anything learned about Kodi itself goes to <code>kodi-drive</code> rather than into a
+        <code>CLAUDE.md</code>.
+      </p>
+    </section>
+
+  </main>
+
+  <footer>
+    docs/shakedown.md · jellyfin-plugin-syncplayv2 · tools/wanshape.py built and verified on this rig
+  </footer>
+
+</div>

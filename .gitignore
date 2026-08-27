@@ -3,3 +3,6 @@ obj/
 artifacts/
 dist/
 run/
+
+# Harness bytecode
+tools/__pycache__/
