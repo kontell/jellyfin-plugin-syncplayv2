@@ -17,7 +17,7 @@
          rank the v12 zip above the 10.11 one, since Jellyfin treats targetAbi
          as a floor and will otherwise happily offer the older build
          (jellyfin#11331, closed Not A Bug). -->
-    <PluginVersion Condition="'$(PluginVersion)' == ''">10.11.0.6</PluginVersion>
+    <PluginVersion Condition="'$(PluginVersion)' == ''">10.11.0.8</PluginVersion>
     <Nullable>enable</Nullable>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <AssemblyVersion>$(PluginVersion)</AssemblyVersion>

@@ -124,6 +124,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
         /// <inheritdoc />
         public override void HandleRequest(ReadyGroupRequest request, IGroupStateContext context, GroupStateType prevState, SessionInfo session, CancellationToken cancellationToken)
         {
+            ResumeIgnoredMember(context, session);
+
             if (prevState.Equals(Type))
             {
                 // Client got lost, sending current state.

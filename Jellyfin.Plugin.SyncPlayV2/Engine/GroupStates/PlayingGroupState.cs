@@ -157,6 +157,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 return;
             }
 
+            ResumeIgnoredMember(context, session);
+
             if (prevState.Equals(Type))
             {
                 // Group was not waiting, make sure client has latest state.

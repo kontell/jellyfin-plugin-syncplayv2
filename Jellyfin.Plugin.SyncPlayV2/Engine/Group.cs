@@ -772,15 +772,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
             member.Session = session;
             member.IsConnected = true;
-            member.IgnoredByTimeout = false;
 
             // Same rule as the report path: reconnecting undoes the group's own
             // "stop waiting for this one", not a spectator choice the member
             // made and has not taken back.
-            if (!member.IgnoreGroupWaitByRequest)
-            {
-                member.IgnoreGroupWait = false;
-            }
+            member.ResumeWaiting();
             BumpStateVersion();
 
             _logger.LogInformation("Session {SessionId} reconnected to group {GroupId} within the grace window.", session.Id, GroupId.ToString());
@@ -1045,6 +1041,12 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         }
 
         /// <inheritdoc />
+        public bool IsIgnoredByTimeout(string sessionId)
+        {
+            return _participants.TryGetValue(sessionId, out GroupMember member) && member.IgnoredByTimeout;
+        }
+
+        /// <inheritdoc />
         public void SetBuffering(SessionInfo session, bool isBuffering)
         {
             if (_participants.TryGetValue(session.Id, out GroupMember value))
@@ -1059,18 +1061,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     value.LastCorrectionDelayTicks = 0;
                 }
 
-                if (!isBuffering && value.IgnoredByTimeout)
+                if (!isBuffering)
                 {
                     // The member reported again after being ignored for keeping the group
-                    // waiting; let the group wait for it once more — unless it asked not
-                    // to be waited for, which is a decision of the member's and not the
-                    // group's to reverse.
-                    value.IgnoredByTimeout = false;
-
-                    if (!value.IgnoreGroupWaitByRequest)
-                    {
-                        value.IgnoreGroupWait = false;
-                    }
+                    // waiting; let the group wait for it once more.
+                    value.ResumeWaiting();
                 }
             }
         }

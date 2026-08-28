@@ -92,6 +92,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
         /// <inheritdoc />
         public override void HandleRequest(ReadyGroupRequest request, IGroupStateContext context, GroupStateType prevState, SessionInfo session, CancellationToken cancellationToken)
         {
+            ResumeIgnoredMember(context, session);
             SendStopCommand(context, prevState, session, cancellationToken);
         }
 

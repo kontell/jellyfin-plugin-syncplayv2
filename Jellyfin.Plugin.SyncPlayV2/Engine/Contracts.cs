@@ -30,6 +30,15 @@ public interface IGroupStateContextV2 : IGroupStateContext
     bool IsHotJoining(string sessionId);
 
     /// <summary>
+    /// Whether the group has stopped waiting for the member because it kept the
+    /// group waiting past <c>GroupWaitTimeout</c>, or was disconnected and flagged
+    /// like one. The member's next ready report clears it.
+    /// </summary>
+    /// <param name="sessionId">The session identifier.</param>
+    /// <returns><c>true</c> if the member is being ignored after a wait timeout.</returns>
+    bool IsIgnoredByTimeout(string sessionId);
+
+    /// <summary>
     /// Admits a v2 member into a Playing group without pausing anyone: the
     /// member is flagged as not-waited-on and pushed a state snapshot to
     /// rendezvous from.

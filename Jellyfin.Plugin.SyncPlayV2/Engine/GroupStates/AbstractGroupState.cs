@@ -168,6 +168,35 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
             UnhandledRequest(request);
         }
 
+        /// <summary>
+        /// Lets the group wait for a member it had given up on, if this report is
+        /// the one that earns it back.
+        ///
+        /// <see cref="GroupMember.IgnoredByTimeout"/> says of itself that it is
+        /// "cleared when the member reports again", and SetMemberDisconnected flags
+        /// a disconnection the same way so that reconnecting undoes it. The only
+        /// thing that clears it is SetBuffering(.., false), and of the four states
+        /// that answer a Ready only WaitingGroupState calls it. The wait-timeout
+        /// sweep runs while the group is Playing, and an ignored member is by
+        /// definition the one the group will not re-enter Waiting for, so its
+        /// reports landed in Playing, Paused or Idle, each of which answers with a
+        /// command and leaves the flags alone. There was no way back.
+        ///
+        /// Called at the top of those three handlers. Nothing else about the group
+        /// changes; the caller carries on and sends the member the group's state as
+        /// it always did.
+        /// </summary>
+        /// <param name="context">The group's state context.</param>
+        /// <param name="session">The session that reported ready.</param>
+        protected void ResumeIgnoredMember(IGroupStateContext context, SessionInfo session)
+        {
+            if (context is IGroupStateContextV2 v2 && v2.IsIgnoredByTimeout(session.Id))
+            {
+                context.SetBuffering(session, false);
+                _logger.LogInformation("Session {SessionId} reported ready in group {GroupId} that is {StateType}; the group waits for it again.", session.Id, context.GroupId.ToString(), Type);
+            }
+        }
+
         /// <inheritdoc />
         public virtual void HandleRequest(NextItemGroupRequest request, IGroupStateContext context, GroupStateType prevState, SessionInfo session, CancellationToken cancellationToken)
         {

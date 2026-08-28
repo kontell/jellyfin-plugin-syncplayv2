@@ -14,7 +14,7 @@ guid: "181f9934-bf71-4941-974e-a5f2cdcccc4e"
 # The build number itself lives in the csproj's PluginVersion, which is what
 # tools/package.sh reads; the value here is documentation and is asserted
 # against it at release time.
-version: "10.11.0.6"
+version: "10.11.0.8"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "kontell"
@@ -24,6 +24,23 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.SyncPlayV2.dll"
 changelog: |-
+  - A member the group stopped waiting for is waited for again as soon as it
+    reports ready, whatever state the group is in. IgnoredByTimeout says of
+    itself that it is "cleared when the member reports again", and
+    SetMemberDisconnected flags a disconnection the same way so that
+    reconnecting undoes it. The only thing that clears it is
+    SetBuffering(.., false), and of the four states that answer a Ready, only
+    WaitingGroupState calls it - Playing, Paused and Idle each reply with a
+    command and leave the flags alone. The wait-timeout sweep runs while the
+    group is Playing, and an ignored member is by definition the one the group
+    will not re-enter Waiting for, so its reports only ever landed in the three
+    states that could not free it. Measured on a Pixel 7 Pro: IsBuffering and
+    IgnoreGroupWait both stuck true while it played normally, surviving a full
+    Kodi restart because the flag is the server's, after which every group seek
+    resumed without waiting for its reload and landed it 2.2-3.2s out instead of
+    0.6s. A leave-and-rejoin was the only way back. Those three states clear it
+    now and then carry on exactly as before; a member that asked to be a
+    spectator keeps that choice.
   - Three defects a real v1 client found in a mixed group, none of them
     reachable with v2 members alone. A v1 member whose corrections did not
     converge was rendezvoused and sent a StateSnapshot it cannot read:
