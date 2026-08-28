@@ -94,6 +94,32 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         public bool IgnoredByTimeout { get; set; }
 
         /// <summary>
+        /// The group waits for this member again, undoing its own decision to stop.
+        ///
+        /// Only the group's decision is reversed. A member that asked not to be
+        /// waited for keeps that until it asks otherwise, which is why the two
+        /// meanings are carried by separate fields (see
+        /// <see cref="IgnoreGroupWaitByRequest"/>).
+        /// </summary>
+        /// <returns><c>true</c> if the member had been ignored and is now waited for again.</returns>
+        public bool ResumeWaiting()
+        {
+            if (!IgnoredByTimeout)
+            {
+                return false;
+            }
+
+            IgnoredByTimeout = false;
+
+            if (!IgnoreGroupWaitByRequest)
+            {
+                IgnoreGroupWait = false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
         /// Gets or sets the SyncPlay protocol version the member's client speaks.
         /// Version 2 clients receive state snapshots and position beacons.
         /// </summary>

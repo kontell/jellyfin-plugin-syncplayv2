@@ -165,6 +165,32 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
         /// <inheritdoc />
         public virtual void HandleRequest(ReadyGroupRequest request, IGroupStateContext context, GroupStateType prevState, SessionInfo session, CancellationToken cancellationToken)
         {
+            // A member the group gave up waiting for gets back in on its next
+            // ready report -- what IgnoredByTimeout's own documentation promises,
+            // and what SetMemberDisconnected relies on to bring a reconnecting
+            // member back.
+            //
+            // WaitingGroupState honours that through SetBuffering(false) once it
+            // has checked the position, and it was the only state that did. Every
+            // other state dropped the report here, so a member ignored while the
+            // group was Playing -- which is when the timeout sweep runs -- stayed
+            // ignored and buffering for the life of the session: the group never
+            // waited for it again, and the flag is the server's, so restarting the
+            // client did not clear it either. Measured on a Pixel 7 Pro,
+            // 2026-08-28: IsBuffering and IgnoreGroupWait both stuck true across a
+            // full Kodi restart, and every group seek then resumed without waiting
+            // for its reload, landing it 2.2-3.2s out instead of 0.6s.
+            //
+            // Nothing else about the group changes: no state transition, no
+            // commands. The member is simply waited for again, and the ordinary
+            // correction path takes it from there.
+            if (context is IGroupStateContextV2 v2 && v2.IsIgnoredByTimeout(session.Id))
+            {
+                context.SetBuffering(session, false);
+                _logger.LogInformation("Session {SessionId} reported ready in group {GroupId} that is {StateType}; the group waits for it again.", session.Id, context.GroupId.ToString(), Type);
+                return;
+            }
+
             UnhandledRequest(request);
         }
 
