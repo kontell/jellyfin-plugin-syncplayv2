@@ -24,81 +24,13 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.SyncPlayV2.dll"
 changelog: |-
-  - A member the group stopped waiting for is waited for again as soon as it
-    reports ready, whatever state the group is in. IgnoredByTimeout says of
-    itself that it is "cleared when the member reports again", and
-    SetMemberDisconnected flags a disconnection the same way so that
-    reconnecting undoes it. The only thing that clears it is
-    SetBuffering(.., false), and of the four states that answer a Ready, only
-    WaitingGroupState calls it - Playing, Paused and Idle each reply with a
-    command and leave the flags alone. The wait-timeout sweep runs while the
-    group is Playing, and an ignored member is by definition the one the group
-    will not re-enter Waiting for, so its reports only ever landed in the three
-    states that could not free it. Measured on a Pixel 7 Pro: IsBuffering and
-    IgnoreGroupWait both stuck true while it played normally, surviving a full
-    Kodi restart because the flag is the server's, after which every group seek
-    resumed without waiting for its reload and landed it 2.2-3.2s out instead of
-    0.6s. A leave-and-rejoin was the only way back. Those three states clear it
-    now and then carry on exactly as before; a member that asked to be a
-    spectator keeps that choice.
-  - A member the group timed out on is no longer marked as having asked for
-    it. 10.11.0.5 separated the two meanings of IgnoreGroupWait - "the group
-    gave up on you" and "you asked not to be waited for" - by stamping the
-    second inside SetIgnoreGroupWait, which is the wrong seam: the engine
-    synthesizes an IgnoreWaitGroupRequest of its own twice, at the wait-timeout
-    sweep and at a transport death while the group is waiting, and both reach
-    the same handler as a real one from the wire. So every member the group
-    timed out on was recorded as a spectator by choice, and its IgnoreGroupWait
-    could never be cleared again for the life of the group - not by its next
-    report, not by a reconnect. One 10s stall and the group would never wait for
-    that member again. The stamp moves to the wire's own entry point, which the
-    engine's synthesized requests bypass.
-  - Three defects a real v1 client found in a mixed group, none of them
-    reachable with v2 members alone. A v1 member whose corrections did not
-    converge was rendezvoused and sent a StateSnapshot it cannot read:
-    WaitingGroupState gated on the *group* being a v2-capable context,
-    which is always true here, instead of on the member's own negotiated
-    version - the wait-timeout sweep had always gated on both that and the
-    HotJoin config, and this path is now brought into line. A member that
-    asked not to be waited for had that choice silently reversed:
-    IgnoreGroupWait carried both "the group gave up on you" and "you asked
-    not to be waited for", so the next report cleared both - jellyfin-web
-    sets IgnoreWait when local playback resumes, and the group went back to
-    counting a member sitting minutes away. And SendWireUpdate had no
-    protocol gate of its own, so a v2-only update could reach a v1 socket;
-    it is gated centrally now rather than at each caller that remembered.
-  - The rendezvous now happens where the group actually gives up on a
-    member: the 10s wait timeout. Live measurement showed the correction
-    branch it was added to in 10.11.0.3 is never reached by the member it
-    was written for - a transcoding client answers a group Seek with one
-    correction at ~7s, the wait timeout fires at 10s, and its next report
-    lands after the group has left Waiting, so a policy needing a second
-    correction never fires. Timing out a v2 member now pushes it a
-    snapshot and answers its next Ready with a private scheduled Unpause,
-    instead of abandoning it where it stood. v1 members are unaffected.
-  - A member that cannot seek into position no longer holds the group up.
-    A transcoded stream lands a seek on its segment boundary rather than
-    where the group asked, so the correction was sent again and again -
-    measured at four rounds and ~13s of the whole group stalled, after
-    which the member played on adrift anyway. It is now handed to the
-    hot-join path instead: the group carries on, the member reloads, and
-    its Ready is answered with a private scheduled Unpause at the live
-    position. Give up after a correction that closes the gap by less than
-    250ms, or after three attempts. Needs the matching kofin client to
-    land tightly - the client aims its reload ahead by however long
-    loading takes.
-  - Hot join: a v2 member joining a Playing group no longer pauses anyone.
-    The group keeps playing, the joiner is pushed a snapshot, loads at the
-    live position and rendezvouses via a private scheduled Unpause - with
-    the updated kofin client it arrives with initial-start tightness. v1
-    joiners (web) keep the classic barrier. Config: HotJoin (default on).
-    Conformance: 17/17 fast suite including the new hot_join scenario.
-  - M1: the full protocol v2 engine (vendored from integration/syncplay-phase1):
-    versioned state, snapshots, position beacons, ping-scaled tolerances,
-    buffering grace, group-wait deadline, 90s disconnect grace with
-    per-version resync. Body-transparent ProtocolVersion negotiation on the
-    stock Join/New routes, POST /SyncPlay/Hello capability probe, dedicated
-    WebSocket time sync at /SyncPlay/TimeSync, enriched /SyncPlay/List.
-    Conformance: 11/12 with the unmodified kit, 12/12 with transport
-    discovery; mixed v1+v2 groups verified via the conformance kit (stock-web
-    wire compatibility proven in the M0 deployment pass).
+  - A member the group gave up on is waited for again when it reports ready
+  - A member the group timed out on is no longer recorded as a spectator
+  - A v1 member no longer gets a snapshot it cannot read
+  - A spectator's choice survives its next report
+  - v2-only updates no longer reach a v1 socket
+  - A timed-out v2 member is rendezvoused instead of abandoned
+  - A member that cannot seek into position no longer holds the group up
+  - A v2 member joining a playing group no longer pauses anyone. Setting: HotJoin
+  - Protocol v2: versioned state, snapshots, position beacons, ping-scaled
+    tolerances, bounded group-waits, 90s reconnect grace
