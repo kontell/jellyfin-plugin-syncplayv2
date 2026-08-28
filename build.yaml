@@ -14,7 +14,7 @@ guid: "181f9934-bf71-4941-974e-a5f2cdcccc4e"
 # The build number itself lives in the csproj's PluginVersion, which is what
 # tools/package.sh reads; the value here is documentation and is asserted
 # against it at release time.
-version: "10.11.0.8"
+version: "10.11.0.6"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "kontell"
@@ -41,6 +41,18 @@ changelog: |-
     0.6s. A leave-and-rejoin was the only way back. Those three states clear it
     now and then carry on exactly as before; a member that asked to be a
     spectator keeps that choice.
+  - A member the group timed out on is no longer marked as having asked for
+    it. 10.11.0.5 separated the two meanings of IgnoreGroupWait - "the group
+    gave up on you" and "you asked not to be waited for" - by stamping the
+    second inside SetIgnoreGroupWait, which is the wrong seam: the engine
+    synthesizes an IgnoreWaitGroupRequest of its own twice, at the wait-timeout
+    sweep and at a transport death while the group is waiting, and both reach
+    the same handler as a real one from the wire. So every member the group
+    timed out on was recorded as a spectator by choice, and its IgnoreGroupWait
+    could never be cleared again for the life of the group - not by its next
+    report, not by a reconnect. One 10s stall and the group would never wait for
+    that member again. The stamp moves to the wire's own entry point, which the
+    engine's synthesized requests bypass.
   - Three defects a real v1 client found in a mixed group, none of them
     reachable with v2 members alone. A v1 member whose corrections did not
     converge was rendezvoused and sent a StateSnapshot it cannot read:
