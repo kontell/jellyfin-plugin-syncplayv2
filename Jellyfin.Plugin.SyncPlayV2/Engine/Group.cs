@@ -147,6 +147,14 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         public PlayQueueManager PlayQueue { get; } = new PlayQueueManager();
 
         /// <summary>
+        /// Gets the external-content entries riding the play queue.
+        /// Feature divergence (VENDORED.md): plan G3.3 — sentinel item ids in
+        /// the stock queue, their descriptors and runtimes here.
+        /// </summary>
+        /// <value>The external-content table.</value>
+        public ContentTable Content { get; } = new ContentTable();
+
+        /// <summary>
         /// Gets the runtime ticks of current playing item.
         /// </summary>
         /// <value>The runtime ticks of current playing item.</value>
@@ -262,6 +270,15 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
             foreach (var itemId in queue)
             {
+                // Feature divergence (VENDORED.md): an external-content
+                // sentinel is not a library item — its entry was validated
+                // at registration, and resolvability is the members' problem
+                // by design (plan G3.3).
+                if (Content.Contains(itemId))
+                {
+                    continue;
+                }
+
                 // Fix divergence (VENDORED.md): GetItemById answers null for
                 // an unknown or deleted id, and upstream dereferences it.
                 var item = _libraryManager.GetItemById(itemId);
@@ -1009,6 +1026,18 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             return Positions.Sanitize(positionTicks, RunTimeTicks);
         }
 
+        /// <summary>
+        /// The runtime of a queue item: the external-content table first
+        /// (where a registered 0 is a real answer — unbounded), the library
+        /// second, 0 for an item neither knows.
+        /// Divergence helper (VENDORED.md): the one spelling of the G3.1
+        /// null guard and the G3.3 content-runtime sourcing.
+        /// </summary>
+        /// <param name="itemId">The queue item id.</param>
+        /// <returns>The runtime in ticks.</returns>
+        private long ItemRunTimeTicks(Guid itemId)
+            => Content.RuntimeOf(itemId) ?? _libraryManager.GetItemById(itemId)?.RunTimeTicks ?? 0;
+
         /// <inheritdoc />
         public void UpdatePing(SessionInfo session, long ping)
         {
@@ -1126,7 +1155,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             PlayQueue.SetPlayingItemByIndex(playingItemPosition);
             // Fix divergence (VENDORED.md): null-guarded — an item deleted
             // between the access check and here NRE'd inside the group lock.
-            RunTimeTicks = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId())?.RunTimeTicks ?? 0;
+            // G3.3: external-content runtimes come from the table.
+            RunTimeTicks = ItemRunTimeTicks(PlayQueue.GetPlayingItemId());
             PositionTicks = startPositionTicks;
             LastActivity = DateTime.UtcNow;
             BumpStateVersion();
@@ -1142,7 +1172,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (itemFound)
             {
                 // Fix divergence (VENDORED.md): null-guarded (see HasAccessToQueue).
-                RunTimeTicks = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId())?.RunTimeTicks ?? 0;
+                RunTimeTicks = ItemRunTimeTicks(PlayQueue.GetPlayingItemId());
             }
             else
             {
@@ -1177,7 +1207,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 if (!itemId.IsEmpty())
                 {
                     // Fix divergence (VENDORED.md): null-guarded (see HasAccessToQueue).
-                    RunTimeTicks = _libraryManager.GetItemById(itemId)?.RunTimeTicks ?? 0;
+                    RunTimeTicks = ItemRunTimeTicks(itemId);
                 }
                 else
                 {
@@ -1249,7 +1279,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 // Fix divergence (VENDORED.md): null-guarded — upstream's NRE
                 // here fired *after* the queue pointer advanced, so the group's
                 // index and every client's view diverged permanently.
-                RunTimeTicks = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId())?.RunTimeTicks ?? 0;
+                RunTimeTicks = ItemRunTimeTicks(PlayQueue.GetPlayingItemId());
                 RestartCurrentItem();
                 BumpStateVersion();
                 return true;
@@ -1265,7 +1295,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (update)
             {
                 // Fix divergence (VENDORED.md): null-guarded (see NextItemInQueue).
-                RunTimeTicks = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId())?.RunTimeTicks ?? 0;
+                RunTimeTicks = ItemRunTimeTicks(PlayQueue.GetPlayingItemId());
                 RestartCurrentItem();
                 BumpStateVersion();
                 return true;

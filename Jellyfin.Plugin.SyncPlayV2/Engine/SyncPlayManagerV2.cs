@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
@@ -441,6 +442,38 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             }
 
             HandleRequestInternal(session, request, cancellationToken);
+        }
+
+        /// <inheritdoc />
+        public void HandleRequestWithContent(
+            SessionInfo session,
+            IGroupPlaybackRequest request,
+            IReadOnlyDictionary<Guid, ContentDescriptor> content,
+            CancellationToken cancellationToken)
+        {
+            // Divergence (VENDORED.md): plan G3.3. Register before dispatch,
+            // under the group lock, so the request's access check finds the
+            // sentinels; prune after, so entries the resulting queue does not
+            // hold — a refused SetNewQueueEx included — do not accumulate.
+            // The two lock takes bracket the same race window the stock
+            // two-step session-to-group check already tolerates.
+            if (_sessionToGroupMap.TryGetValue(session.Id, out var group))
+            {
+                lock (group)
+                {
+                    group.Content.Register(content);
+                }
+            }
+
+            HandleRequest(session, request, cancellationToken);
+
+            if (_sessionToGroupMap.TryGetValue(session.Id, out var groupAfter))
+            {
+                lock (groupAfter)
+                {
+                    groupAfter.Content.PruneTo(groupAfter.PlayQueue.GetPlaylist().Select(entry => entry.ItemId));
+                }
+            }
         }
 
         private void HandleRequestInternal(SessionInfo session, IGroupPlaybackRequest request, CancellationToken cancellationToken)

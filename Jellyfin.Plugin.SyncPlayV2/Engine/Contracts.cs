@@ -91,4 +91,20 @@ public interface ISyncPlayManagerV2 : ISyncPlayManager
     /// the shadowed GET /SyncPlay/List.
     /// </summary>
     List<Wire.WireGroupInfo> ListGroupsDetailed(SessionInfo session, bool requesterIsV2);
+
+    /// <summary>
+    /// A queue request whose entries include external content (plan G3.3):
+    /// registers the sentinel-keyed descriptors on the session's group, then
+    /// dispatches the request through the ordinary path, then prunes entries
+    /// the resulting queue does not hold (a refused request included).
+    /// </summary>
+    /// <param name="session">The requesting session.</param>
+    /// <param name="request">The playback request carrying the sentinel ids.</param>
+    /// <param name="content">Sentinel item id to descriptor.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    void HandleRequestWithContent(
+        SessionInfo session,
+        IGroupPlaybackRequest request,
+        IReadOnlyDictionary<Guid, ContentDescriptor> content,
+        CancellationToken cancellationToken);
 }
