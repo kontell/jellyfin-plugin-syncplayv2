@@ -262,8 +262,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
             foreach (var itemId in queue)
             {
+                // Fix divergence (VENDORED.md): GetItemById answers null for
+                // an unknown or deleted id, and upstream dereferences it.
                 var item = _libraryManager.GetItemById(itemId);
-                if (!item.IsVisibleStandalone(user))
+                if (item is null || !item.IsVisibleStandalone(user))
                 {
                     return false;
                 }
@@ -1002,8 +1004,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <inheritdoc />
         public long SanitizePositionTicks(long? positionTicks)
         {
-            var ticks = positionTicks ?? 0;
-            return Math.Clamp(ticks, 0, RunTimeTicks);
+            // Fix divergence (VENDORED.md): a runtime of 0 is unbounded, not
+            // a clamp-everything-to-zero; the arithmetic lives in Positions.
+            return Positions.Sanitize(positionTicks, RunTimeTicks);
         }
 
         /// <inheritdoc />
@@ -1121,8 +1124,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             PlayQueue.Reset();
             PlayQueue.SetPlaylist(playQueue);
             PlayQueue.SetPlayingItemByIndex(playingItemPosition);
-            var item = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId());
-            RunTimeTicks = item.RunTimeTicks ?? 0;
+            // Fix divergence (VENDORED.md): null-guarded — an item deleted
+            // between the access check and here NRE'd inside the group lock.
+            RunTimeTicks = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId())?.RunTimeTicks ?? 0;
             PositionTicks = startPositionTicks;
             LastActivity = DateTime.UtcNow;
             BumpStateVersion();
@@ -1137,8 +1141,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
             if (itemFound)
             {
-                var item = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId());
-                RunTimeTicks = item.RunTimeTicks ?? 0;
+                // Fix divergence (VENDORED.md): null-guarded (see HasAccessToQueue).
+                RunTimeTicks = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId())?.RunTimeTicks ?? 0;
             }
             else
             {
@@ -1172,8 +1176,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 var itemId = PlayQueue.GetPlayingItemId();
                 if (!itemId.IsEmpty())
                 {
-                    var item = _libraryManager.GetItemById(itemId);
-                    RunTimeTicks = item.RunTimeTicks ?? 0;
+                    // Fix divergence (VENDORED.md): null-guarded (see HasAccessToQueue).
+                    RunTimeTicks = _libraryManager.GetItemById(itemId)?.RunTimeTicks ?? 0;
                 }
                 else
                 {
@@ -1242,8 +1246,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             var update = PlayQueue.Next();
             if (update)
             {
-                var item = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId());
-                RunTimeTicks = item.RunTimeTicks ?? 0;
+                // Fix divergence (VENDORED.md): null-guarded — upstream's NRE
+                // here fired *after* the queue pointer advanced, so the group's
+                // index and every client's view diverged permanently.
+                RunTimeTicks = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId())?.RunTimeTicks ?? 0;
                 RestartCurrentItem();
                 BumpStateVersion();
                 return true;
@@ -1258,8 +1264,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             var update = PlayQueue.Previous();
             if (update)
             {
-                var item = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId());
-                RunTimeTicks = item.RunTimeTicks ?? 0;
+                // Fix divergence (VENDORED.md): null-guarded (see NextItemInQueue).
+                RunTimeTicks = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId())?.RunTimeTicks ?? 0;
                 RestartCurrentItem();
                 BumpStateVersion();
                 return true;
