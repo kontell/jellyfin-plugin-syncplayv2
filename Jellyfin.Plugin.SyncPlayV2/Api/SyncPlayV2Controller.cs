@@ -49,13 +49,15 @@ public class SyncPlayV2Controller : ControllerBase
     public ActionResult Hello([FromBody] HelloRequest? request)
     {
         var (client, deviceId) = SessionResolver.Identity(User);
-        _versions.Register(client, deviceId, request?.ProtocolVersion ?? 1);
+        var externalContent = request?.Capabilities?.Contains(ProtocolVersionRegistry.ExternalContentCapability) == true;
+        _versions.RegisterHello(client, deviceId, request?.ProtocolVersion ?? 1, externalContent);
 
         return Ok(new
         {
             ProtocolVersion = 2,
             PluginVersion = typeof(SyncPlayV2Controller).Assembly.GetName().Version?.ToString(),
             TimeSync = new { WebSocketPath = "/SyncPlay/TimeSync" },
+            Capabilities = new[] { ProtocolVersionRegistry.ExternalContentCapability },
         });
     }
 
@@ -146,5 +148,8 @@ public class SyncPlayV2Controller : ControllerBase
     public class HelloRequest
     {
         public int ProtocolVersion { get; set; } = 1;
+
+        /// <summary>Gets or sets the capabilities the device declares (plan G3.2), e.g. "ExternalContent".</summary>
+        public System.Collections.Generic.List<string>? Capabilities { get; set; }
     }
 }

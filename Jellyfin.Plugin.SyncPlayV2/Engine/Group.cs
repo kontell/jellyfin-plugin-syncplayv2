@@ -299,6 +299,16 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 return true;
             }
 
+            // Feature divergence (VENDORED.md, plan G3.4): a queue holding
+            // external content needs every member's device to have declared
+            // the capability — the stock rule is already "every member must
+            // access every item", and the capability is that check for
+            // content the server cannot resolve.
+            if (queue.Any(itemId => Content.Contains(itemId)) && !AllMembersSeeExternalContent())
+            {
+                return false;
+            }
+
             // Get list of users.
             var users = _participants
                 .Values
@@ -461,6 +471,35 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         public bool IsV2Member(string sessionId)
             => _participants.TryGetValue(sessionId, out GroupMember member) && member.ProtocolVersion >= 2;
 
+        /// <summary>
+        /// Whether a session can represent this group's queue: with external
+        /// content in it, only a device that declared the capability can
+        /// (plan G3.4) — everyone else must not see the group at all, the
+        /// same UX stock gives a queue a user cannot resolve.
+        /// Feature divergence (VENDORED.md).
+        /// </summary>
+        /// <param name="session">The session asking.</param>
+        /// <returns>true when the queue is representable to it.</returns>
+        public bool CanRepresentQueue(SessionInfo session)
+            => Content.Count == 0 || _versions.HasExternalContent(session);
+
+        /// <summary>
+        /// Whether the member's device declared the external-content
+        /// capability. Feature divergence (VENDORED.md, plan G3.4).
+        /// </summary>
+        private bool SeesExternalContent(string sessionId)
+            => _participants.TryGetValue(sessionId, out GroupMember member)
+                && _versions.HasExternalContent(member.Session);
+
+        /// <summary>
+        /// Whether every member's device declared the external-content
+        /// capability — the access analog for content the server cannot
+        /// resolve, mirroring AllUsersHaveAccessToQueue's shape.
+        /// Feature divergence (VENDORED.md, plan G3.4).
+        /// </summary>
+        private bool AllMembersSeeExternalContent()
+            => _participants.Values.All(member => _versions.HasExternalContent(member.Session));
+
         /// <inheritdoc />
         public bool IsHotJoining(string sessionId)
             => _participants.TryGetValue(sessionId, out GroupMember member) && member.HotJoining;
@@ -483,7 +522,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
             // Everything the joiner needs to rendezvous: the complete state,
             // with position-at-time to extrapolate the running playback from.
-            SendWireUpdate(session, "StateSnapshot", GetSnapshot(), cancellationToken);
+            SendWireUpdate(session, "StateSnapshot", GetSnapshot(SeesExternalContent(session.Id)), cancellationToken);
 
             _logger.LogInformation(
                 "Session {SessionId} hot-joining group {GroupId}: playback continues for everyone else.",
@@ -628,7 +667,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (member.ProtocolVersion >= 2)
             {
                 // Protocol version 2 clients get the state in a single message.
-                SendWireUpdate(session, "StateSnapshot", GetSnapshot(), cancellationToken);
+                SendWireUpdate(session, "StateSnapshot", GetSnapshot(SeesExternalContent(session.Id)), cancellationToken);
             }
             else
             {
@@ -654,7 +693,15 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// Builds a snapshot of the full group state.
         /// </summary>
         /// <returns>The group state snapshot.</returns>
-        public WireGroupSnapshot GetSnapshot()
+        public WireGroupSnapshot GetSnapshot() => GetSnapshot(false);
+
+        /// <summary>
+        /// The complete group state; with <paramref name="withContent"/> the
+        /// queue names its external content (plan G3.4, capability members).
+        /// </summary>
+        /// <param name="withContent">Whether to enrich the queue.</param>
+        /// <returns>The snapshot payload.</returns>
+        public WireGroupSnapshot GetSnapshot(bool withContent)
         {
             var now = DateTime.UtcNow;
             var isPlaying = _state.Type.Equals(GroupStateType.Playing);
@@ -670,7 +717,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             {
                 GroupName = GroupName,
                 State = _state.Type,
-                PlayQueue = GetPlayQueueUpdate(PlayQueueUpdateReason.NewPlaylist),
+                PlayQueue = withContent && Content.Count > 0
+                    ? Wire.WirePlayQueueUpdate.From(GetPlayQueueUpdate(PlayQueueUpdateReason.NewPlaylist), Content)
+                    : GetPlayQueueUpdate(PlayQueueUpdateReason.NewPlaylist),
                 PositionTicks = positionTicks,
                 When = now,
                 IsPlaying = isPlaying,
@@ -941,6 +990,23 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             // deliver through the session controllers (the M0-proven path).
             var wire = WireGroupUpdate.From(message, _stateVersion);
 
+            // Feature divergence (VENDORED.md, plan G3.4): a queue update in a
+            // group carrying external content is enriched per entry for members
+            // that declared the capability; everyone else keeps the stock shape
+            // (bare sentinel ids — the visibility gates keep such members out
+            // of descriptor groups in the first place).
+            WireGroupUpdate enriched = null;
+            if (Content.Count > 0 && message.Data is PlayQueueUpdate queueUpdate)
+            {
+                enriched = new WireGroupUpdate
+                {
+                    GroupId = wire.GroupId,
+                    Type = wire.Type,
+                    StateVersion = _stateVersion,
+                    Data = Wire.WirePlayQueueUpdate.From(queueUpdate, Content),
+                };
+            }
+
             IEnumerable<Task> GetTasks()
             {
                 foreach (var sessionId in FilterSessions(from.Id, type))
@@ -948,7 +1014,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     var target = ResolveTarget(sessionId, from);
                     if (target is not null)
                     {
-                        yield return _sender.SendGroupUpdate(target, wire, cancellationToken);
+                        var payload = enriched is not null && SeesExternalContent(sessionId) ? enriched : wire;
+                        yield return _sender.SendGroupUpdate(target, payload, cancellationToken);
                     }
                 }
             }

@@ -232,7 +232,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 // Group lock required to let other requests end first.
                 lock (group)
                 {
-                    if (!group.HasAccessToPlayQueue(user))
+                    // Feature divergence (VENDORED.md, plan G3.4): a device
+                    // without the external-content capability cannot join a
+                    // descriptor group — same refusal as inaccessible items.
+                    if (!group.HasAccessToPlayQueue(user) || !group.CanRepresentQueue(session))
                     {
                         _logger.LogWarning("Session {SessionId} tried to join group {GroupId} but does not have access to some content of the playing queue.", session.Id, group.GroupId.ToString());
 
@@ -342,7 +345,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     // Locking required as group is not thread-safe.
                     lock (group)
                     {
-                        if (group.HasAccessToPlayQueue(user))
+                        // Feature divergence (VENDORED.md, plan G3.4): descriptor groups
+                        // are invisible to devices without the capability.
+                        if (group.HasAccessToPlayQueue(user) && group.CanRepresentQueue(session))
                         {
                             list.Add(group.GetInfo());
                         }
@@ -368,7 +373,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     // Locking required as group is not thread-safe.
                     lock (group)
                     {
-                        if (group.HasAccessToPlayQueue(user))
+                        // Feature divergence (VENDORED.md, plan G3.4): descriptor groups
+                        // are invisible to devices without the capability.
+                        if (group.HasAccessToPlayQueue(user) && group.CanRepresentQueue(session))
                         {
                             list.Add(group.GetWireInfo(requesterIsV2));
                         }
@@ -393,7 +400,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     // Locking required as group is not thread-safe.
                     lock (group)
                     {
-                        if (group.GroupId.Equals(groupId) && group.HasAccessToPlayQueue(user))
+                        // Feature divergence (VENDORED.md, plan G3.4): as in the lists.
+                        if (group.GroupId.Equals(groupId) && group.HasAccessToPlayQueue(user) && group.CanRepresentQueue(session))
                         {
                             return group.GetInfo();
                         }
