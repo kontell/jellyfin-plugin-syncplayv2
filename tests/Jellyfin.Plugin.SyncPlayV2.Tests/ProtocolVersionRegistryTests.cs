@@ -58,3 +58,44 @@ public class ProtocolVersionRegistryTests
         Assert.Equal(1, registry.Resolve("kofin", string.Empty));
     }
 }
+
+public class RegistryCapabilityTests
+{
+    [Fact]
+    public void AHelloDeclarationSticksAndDefaultsOff()
+    {
+        var registry = new ProtocolVersionRegistry();
+
+        Assert.False(registry.HasExternalContent("kofin", "dev-1"));
+
+        registry.RegisterHello("kofin", "dev-1", 2, externalContent: true);
+
+        Assert.True(registry.HasExternalContent("kofin", "dev-1"));
+        Assert.Equal(2, registry.Resolve("kofin", "dev-1"));
+    }
+
+    [Fact]
+    public void ASnifferWriteMustNotWipeTheCapability()
+    {
+        // The body sniffer re-registers the version on every stock Join/New,
+        // moments after the Hello that declared the capability — a plain
+        // version write preserves the declaration.
+        var registry = new ProtocolVersionRegistry();
+        registry.RegisterHello("kofin", "dev-1", 2, externalContent: true);
+
+        registry.Register("kofin", "dev-1", 2);
+
+        Assert.True(registry.HasExternalContent("kofin", "dev-1"));
+    }
+
+    [Fact]
+    public void TheNextHelloWinsWithdrawalsIncluded()
+    {
+        var registry = new ProtocolVersionRegistry();
+        registry.RegisterHello("kofin", "dev-1", 2, externalContent: true);
+
+        registry.RegisterHello("kofin", "dev-1", 2, externalContent: false);
+
+        Assert.False(registry.HasExternalContent("kofin", "dev-1"));
+    }
+}

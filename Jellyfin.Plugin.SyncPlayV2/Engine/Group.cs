@@ -147,6 +147,14 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         public PlayQueueManager PlayQueue { get; } = new PlayQueueManager();
 
         /// <summary>
+        /// Gets the external-content entries riding the play queue.
+        /// Feature divergence (VENDORED.md): plan G3.3 — sentinel item ids in
+        /// the stock queue, their descriptors and runtimes here.
+        /// </summary>
+        /// <value>The external-content table.</value>
+        public ContentTable Content { get; } = new ContentTable();
+
+        /// <summary>
         /// Gets the runtime ticks of current playing item.
         /// </summary>
         /// <value>The runtime ticks of current playing item.</value>
@@ -262,6 +270,15 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
             foreach (var itemId in queue)
             {
+                // Feature divergence (VENDORED.md): an external-content
+                // sentinel is not a library item — its entry was validated
+                // at registration, and resolvability is the members' problem
+                // by design (plan G3.3).
+                if (Content.Contains(itemId))
+                {
+                    continue;
+                }
+
                 // Fix divergence (VENDORED.md): GetItemById answers null for
                 // an unknown or deleted id, and upstream dereferences it.
                 var item = _libraryManager.GetItemById(itemId);
@@ -280,6 +297,16 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (queue is null || queue.Count == 0)
             {
                 return true;
+            }
+
+            // Feature divergence (VENDORED.md, plan G3.4): a queue holding
+            // external content needs every member's device to have declared
+            // the capability — the stock rule is already "every member must
+            // access every item", and the capability is that check for
+            // content the server cannot resolve.
+            if (queue.Any(itemId => Content.Contains(itemId)) && !AllMembersSeeExternalContent())
+            {
+                return false;
             }
 
             // Get list of users.
@@ -444,6 +471,35 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         public bool IsV2Member(string sessionId)
             => _participants.TryGetValue(sessionId, out GroupMember member) && member.ProtocolVersion >= 2;
 
+        /// <summary>
+        /// Whether a session can represent this group's queue: with external
+        /// content in it, only a device that declared the capability can
+        /// (plan G3.4) — everyone else must not see the group at all, the
+        /// same UX stock gives a queue a user cannot resolve.
+        /// Feature divergence (VENDORED.md).
+        /// </summary>
+        /// <param name="session">The session asking.</param>
+        /// <returns>true when the queue is representable to it.</returns>
+        public bool CanRepresentQueue(SessionInfo session)
+            => Content.Count == 0 || _versions.HasExternalContent(session);
+
+        /// <summary>
+        /// Whether the member's device declared the external-content
+        /// capability. Feature divergence (VENDORED.md, plan G3.4).
+        /// </summary>
+        private bool SeesExternalContent(string sessionId)
+            => _participants.TryGetValue(sessionId, out GroupMember member)
+                && _versions.HasExternalContent(member.Session);
+
+        /// <summary>
+        /// Whether every member's device declared the external-content
+        /// capability — the access analog for content the server cannot
+        /// resolve, mirroring AllUsersHaveAccessToQueue's shape.
+        /// Feature divergence (VENDORED.md, plan G3.4).
+        /// </summary>
+        private bool AllMembersSeeExternalContent()
+            => _participants.Values.All(member => _versions.HasExternalContent(member.Session));
+
         /// <inheritdoc />
         public bool IsHotJoining(string sessionId)
             => _participants.TryGetValue(sessionId, out GroupMember member) && member.HotJoining;
@@ -466,7 +522,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
             // Everything the joiner needs to rendezvous: the complete state,
             // with position-at-time to extrapolate the running playback from.
-            SendWireUpdate(session, "StateSnapshot", GetSnapshot(), cancellationToken);
+            SendWireUpdate(session, "StateSnapshot", GetSnapshot(SeesExternalContent(session.Id)), cancellationToken);
 
             _logger.LogInformation(
                 "Session {SessionId} hot-joining group {GroupId}: playback continues for everyone else.",
@@ -611,7 +667,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (member.ProtocolVersion >= 2)
             {
                 // Protocol version 2 clients get the state in a single message.
-                SendWireUpdate(session, "StateSnapshot", GetSnapshot(), cancellationToken);
+                SendWireUpdate(session, "StateSnapshot", GetSnapshot(SeesExternalContent(session.Id)), cancellationToken);
             }
             else
             {
@@ -637,7 +693,15 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// Builds a snapshot of the full group state.
         /// </summary>
         /// <returns>The group state snapshot.</returns>
-        public WireGroupSnapshot GetSnapshot()
+        public WireGroupSnapshot GetSnapshot() => GetSnapshot(false);
+
+        /// <summary>
+        /// The complete group state; with <paramref name="withContent"/> the
+        /// queue names its external content (plan G3.4, capability members).
+        /// </summary>
+        /// <param name="withContent">Whether to enrich the queue.</param>
+        /// <returns>The snapshot payload.</returns>
+        public WireGroupSnapshot GetSnapshot(bool withContent)
         {
             var now = DateTime.UtcNow;
             var isPlaying = _state.Type.Equals(GroupStateType.Playing);
@@ -653,7 +717,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             {
                 GroupName = GroupName,
                 State = _state.Type,
-                PlayQueue = GetPlayQueueUpdate(PlayQueueUpdateReason.NewPlaylist),
+                PlayQueue = withContent && Content.Count > 0
+                    ? Wire.WirePlayQueueUpdate.From(GetPlayQueueUpdate(PlayQueueUpdateReason.NewPlaylist), Content)
+                    : GetPlayQueueUpdate(PlayQueueUpdateReason.NewPlaylist),
                 PositionTicks = positionTicks,
                 When = now,
                 IsPlaying = isPlaying,
@@ -924,6 +990,23 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             // deliver through the session controllers (the M0-proven path).
             var wire = WireGroupUpdate.From(message, _stateVersion);
 
+            // Feature divergence (VENDORED.md, plan G3.4): a queue update in a
+            // group carrying external content is enriched per entry for members
+            // that declared the capability; everyone else keeps the stock shape
+            // (bare sentinel ids — the visibility gates keep such members out
+            // of descriptor groups in the first place).
+            WireGroupUpdate enriched = null;
+            if (Content.Count > 0 && message.Data is PlayQueueUpdate queueUpdate)
+            {
+                enriched = new WireGroupUpdate
+                {
+                    GroupId = wire.GroupId,
+                    Type = wire.Type,
+                    StateVersion = _stateVersion,
+                    Data = Wire.WirePlayQueueUpdate.From(queueUpdate, Content),
+                };
+            }
+
             IEnumerable<Task> GetTasks()
             {
                 foreach (var sessionId in FilterSessions(from.Id, type))
@@ -931,7 +1014,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     var target = ResolveTarget(sessionId, from);
                     if (target is not null)
                     {
-                        yield return _sender.SendGroupUpdate(target, wire, cancellationToken);
+                        var payload = enriched is not null && SeesExternalContent(sessionId) ? enriched : wire;
+                        yield return _sender.SendGroupUpdate(target, payload, cancellationToken);
                     }
                 }
             }
@@ -1008,6 +1092,18 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             // a clamp-everything-to-zero; the arithmetic lives in Positions.
             return Positions.Sanitize(positionTicks, RunTimeTicks);
         }
+
+        /// <summary>
+        /// The runtime of a queue item: the external-content table first
+        /// (where a registered 0 is a real answer — unbounded), the library
+        /// second, 0 for an item neither knows.
+        /// Divergence helper (VENDORED.md): the one spelling of the G3.1
+        /// null guard and the G3.3 content-runtime sourcing.
+        /// </summary>
+        /// <param name="itemId">The queue item id.</param>
+        /// <returns>The runtime in ticks.</returns>
+        private long ItemRunTimeTicks(Guid itemId)
+            => Content.RuntimeOf(itemId) ?? _libraryManager.GetItemById(itemId)?.RunTimeTicks ?? 0;
 
         /// <inheritdoc />
         public void UpdatePing(SessionInfo session, long ping)
@@ -1126,7 +1222,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             PlayQueue.SetPlayingItemByIndex(playingItemPosition);
             // Fix divergence (VENDORED.md): null-guarded — an item deleted
             // between the access check and here NRE'd inside the group lock.
-            RunTimeTicks = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId())?.RunTimeTicks ?? 0;
+            // G3.3: external-content runtimes come from the table.
+            RunTimeTicks = ItemRunTimeTicks(PlayQueue.GetPlayingItemId());
             PositionTicks = startPositionTicks;
             LastActivity = DateTime.UtcNow;
             BumpStateVersion();
@@ -1142,7 +1239,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (itemFound)
             {
                 // Fix divergence (VENDORED.md): null-guarded (see HasAccessToQueue).
-                RunTimeTicks = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId())?.RunTimeTicks ?? 0;
+                RunTimeTicks = ItemRunTimeTicks(PlayQueue.GetPlayingItemId());
             }
             else
             {
@@ -1177,7 +1274,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 if (!itemId.IsEmpty())
                 {
                     // Fix divergence (VENDORED.md): null-guarded (see HasAccessToQueue).
-                    RunTimeTicks = _libraryManager.GetItemById(itemId)?.RunTimeTicks ?? 0;
+                    RunTimeTicks = ItemRunTimeTicks(itemId);
                 }
                 else
                 {
@@ -1249,7 +1346,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 // Fix divergence (VENDORED.md): null-guarded — upstream's NRE
                 // here fired *after* the queue pointer advanced, so the group's
                 // index and every client's view diverged permanently.
-                RunTimeTicks = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId())?.RunTimeTicks ?? 0;
+                RunTimeTicks = ItemRunTimeTicks(PlayQueue.GetPlayingItemId());
                 RestartCurrentItem();
                 BumpStateVersion();
                 return true;
@@ -1265,7 +1362,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (update)
             {
                 // Fix divergence (VENDORED.md): null-guarded (see NextItemInQueue).
-                RunTimeTicks = _libraryManager.GetItemById(PlayQueue.GetPlayingItemId())?.RunTimeTicks ?? 0;
+                RunTimeTicks = ItemRunTimeTicks(PlayQueue.GetPlayingItemId());
                 RestartCurrentItem();
                 BumpStateVersion();
                 return true;
