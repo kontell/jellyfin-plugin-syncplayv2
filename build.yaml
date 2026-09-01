@@ -14,7 +14,7 @@ guid: "181f9934-bf71-4941-974e-a5f2cdcccc4e"
 # The build number itself lives in the csproj's PluginVersion, which is what
 # tools/package.sh reads; the value here is documentation and is asserted
 # against it at release time.
-version: "10.11.0.6"
+version: "10.11.0.7"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "kontell"
@@ -24,6 +24,12 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.SyncPlayV2.dll"
 changelog: |-
+  - An item deleted while it sits in a group's queue no longer breaks the group
+  - An item with no runtime - live TV, external content - no longer zeroes
+    every seek and position report
+  - Queue entries the server cannot resolve, for clients that declare they can
+    play them. Capability: ExternalContent
+  - A group holding such entries is invisible to clients that cannot play it
   - A member the group gave up on is waited for again when it reports ready
   - A member the group timed out on is no longer recorded as a spectator
   - A v1 member no longer gets a snapshot it cannot read
