@@ -23,6 +23,12 @@ description: "SyncPlay protocol v2: versioned state, snapshots, position beacons
 category: "General"
 artifacts:
   - "Jellyfin.Plugin.SyncPlayV2.dll"
+# What changed in THIS release and nothing else. The block is read whole — by
+# tools/package.sh into meta.json, and by release.yml into the GitHub release
+# body — and manifest.json carries a changelog per version too, so it is
+# replaced each release rather than appended to. The history is the git log and
+# the releases already published; every release up to 10.11.0.6 restated all of
+# its predecessors because this block was only ever added to.
 changelog: |-
   - An item deleted while it sits in a group's queue no longer breaks the group
   - An item with no runtime - live TV, external content - no longer zeroes
@@ -30,13 +36,3 @@ changelog: |-
   - Queue entries the server cannot resolve, for clients that declare they can
     play them. Capability: ExternalContent
   - A group holding such entries is invisible to clients that cannot play it
-  - A member the group gave up on is waited for again when it reports ready
-  - A member the group timed out on is no longer recorded as a spectator
-  - A v1 member no longer gets a snapshot it cannot read
-  - A spectator's choice survives its next report
-  - v2-only updates no longer reach a v1 socket
-  - A timed-out v2 member is rendezvoused instead of abandoned
-  - A member that cannot seek into position no longer holds the group up
-  - A v2 member joining a playing group no longer pauses anyone. Setting: HotJoin
-  - Protocol v2: versioned state, snapshots, position beacons, ping-scaled
-    tolerances, bounded group-waits, 90s reconnect grace
