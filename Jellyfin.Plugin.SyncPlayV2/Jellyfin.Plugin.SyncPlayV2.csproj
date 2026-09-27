@@ -44,4 +44,9 @@
     <EmbeddedResource Include="Configuration\configPage.html" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Test seams (a clock and a sweep the tests drive) stay internal. -->
+    <InternalsVisibleTo Include="Jellyfin.Plugin.SyncPlayV2.Tests" />
+  </ItemGroup>
+
 </Project>
