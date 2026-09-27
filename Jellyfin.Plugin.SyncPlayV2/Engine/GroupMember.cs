@@ -88,9 +88,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
         /// <summary>
         /// Gets or sets a value indicating whether the member's current wait is
-        /// a load the group asked for (new item, seek, join) rather than a stall
-        /// of its own. A load can mean starting a transcode and is given the
-        /// longer LoadTimeout; a stall gets StallTimeout.
+        /// an item load the group asked for (new item, restart, classic join)
+        /// rather than a stall of its own. A load can mean starting a transcode
+        /// and is given the longer LoadTimeout; a stall, and a seek within the
+        /// loaded item, get StallTimeout. Cleared when the member is ready.
         /// </summary>
         /// <value><c>true</c> while the member is loading at the group's request.</value>
         public bool BufferingForLoad { get; set; }

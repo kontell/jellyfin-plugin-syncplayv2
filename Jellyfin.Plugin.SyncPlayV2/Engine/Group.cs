@@ -468,7 +468,18 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             //      Once all clients report to be ready the group's state can change to Playing or Paused.
             // - Playing: clients have some media loaded and playback is unpaused.
             // - Paused: clients have some media loaded but playback is currently paused.
-            request.Apply(this, _state, session, cancellationToken);
+            try
+            {
+                request.Apply(this, _state, session, cancellationToken);
+            }
+            finally
+            {
+                // Feature divergence (VENDORED.md): an item load is the
+                // group-wide wait the same request starts. A change that starts
+                // none (removing the playing entry keeps the state) must not
+                // leave the mark behind for the next wait, a Seek's included.
+                _itemLoadPending = false;
+            }
         }
 
         /// <summary>
@@ -1390,6 +1401,12 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             }
 
             member.IsBuffering = isBuffering;
+
+            if (!isBuffering)
+            {
+                // Loaded: the flag describes the current wait, not the last one.
+                member.BufferingForLoad = false;
+            }
         }
 
         /// <inheritdoc />

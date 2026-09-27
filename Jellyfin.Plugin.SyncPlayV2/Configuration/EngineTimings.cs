@@ -54,7 +54,8 @@ public sealed class EngineTimings
 
     /// <summary>
     /// Gets how long the group waits for a member to load when the group
-    /// made everyone load (new item, seek, join).
+    /// made everyone load an item (new item, restart, classic join). A seek
+    /// within the loaded item keeps <see cref="StallTimeout"/>.
     /// </summary>
     public TimeSpan LoadTimeout { get; }
 
