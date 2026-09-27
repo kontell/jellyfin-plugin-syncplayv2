@@ -36,6 +36,7 @@ public class SocketLiveness : IWebSocketListener, IDisposable
     private readonly EngineCounters _counters;
     private readonly ConcurrentDictionary<IWebSocketConnection, Entry> _sockets = new();
     private readonly Timer _timer;
+    private int _sweeping;
 
     public SocketLiveness(ISessionManager sessionManager, SyncPlayManagerV2 engine, ILogger<SocketLiveness> logger, EngineCounters counters)
     {
@@ -98,6 +99,13 @@ public class SocketLiveness : IWebSocketListener, IDisposable
 
     private void Sweep()
     {
+        // Timer callbacks can overlap; two sweeps reading the same entry's
+        // ReportedDead would both report (and count) one death.
+        if (Interlocked.CompareExchange(ref _sweeping, 1, 0) != 0)
+        {
+            return;
+        }
+
         try
         {
             foreach (var (connection, entry) in _sockets)
@@ -126,6 +134,10 @@ public class SocketLiveness : IWebSocketListener, IDisposable
                         && !IsStale(kv.Key, kv.Value));
 
                     entry.ReportedDead = true;
+
+                    // A dead socket is counted whether or not a live sibling
+                    // keeps its session connected.
+                    _counters.ZombieSocket();
                     if (!hasLiveSibling)
                     {
                         Notify(entry, dead: true);
@@ -142,6 +154,10 @@ public class SocketLiveness : IWebSocketListener, IDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Socket liveness sweep failed.");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _sweeping, 0);
         }
     }
 
@@ -170,13 +186,6 @@ public class SocketLiveness : IWebSocketListener, IDisposable
     private void Notify(Entry entry, bool dead)
     {
         var sessions = SessionsOf(_sessionManager.Sessions, entry.Client, entry.DeviceId);
-        if (dead && sessions.Count > 0)
-        {
-            // Count the dead socket once even when an unnamed client matches
-            // more than one session on its device.
-            _counters.ZombieSocket();
-        }
-
         foreach (var session in sessions)
         {
             if (dead)

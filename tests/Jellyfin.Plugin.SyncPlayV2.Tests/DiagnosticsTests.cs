@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using Jellyfin.Plugin.SyncPlayV2.Tests.Harness;
+using MediaBrowser.Controller.SyncPlay.Requests;
 using MediaBrowser.Model.SyncPlay;
 using Xunit;
 
@@ -144,6 +145,38 @@ public class DiagnosticsTests
         Assert.NotNull(member.DisconnectedSeconds);
 
         harness.Group.ReconnectSession(b.Session, CancellationToken.None);
+
+        var counters = harness.Counters.Snapshot();
+        Assert.Equal(1, counters.Disconnects);
+        Assert.Equal(1, counters.Reconnects);
+    }
+
+    [Fact]
+    public void ARepeatedJoinIsNotAnotherHotJoin()
+    {
+        // The manager answers a Join from a member already in the group by
+        // joining it again ("restore session"); the catch-up runs again, but
+        // nobody new joined.
+        var harness = new GroupHarness();
+        var a = harness.Join("a", protocolVersion: 2);
+        harness.StartPlaying(new[] { a }, Minute);
+        var b = harness.Join("b", protocolVersion: 2);
+
+        harness.Group.SessionJoin(b.Session, new JoinGroupRequest(harness.Group.GroupId), CancellationToken.None);
+
+        Assert.Equal(1, harness.Counters.Snapshot().HotJoins);
+    }
+
+    [Fact]
+    public void RejoiningAfterADisconnectionIsAReconnection()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+        harness.Group.SetMemberDisconnected(b.Session);
+
+        harness.Group.SessionJoin(b.Session, new JoinGroupRequest(harness.Group.GroupId), CancellationToken.None);
 
         var counters = harness.Counters.Snapshot();
         Assert.Equal(1, counters.Disconnects);

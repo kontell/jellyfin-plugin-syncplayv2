@@ -463,7 +463,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 return;
             }
 
-            if (request is ReadyGroupRequest && CancelDeferredBuffering(session.Id))
+            if (request is ReadyGroupRequest && CancelDeferredBuffering(session.Id) is { WouldPause: true })
             {
                 _counters.BufferingRecovered();
             }
@@ -709,7 +709,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     // Keep the first report; a member that is still buffering does not get more grace.
                     if (!_deferredBuffering.ContainsKey(session.Id))
                     {
-                        _deferredBuffering[session.Id] = new DeferredBuffering(session, request, group.GroupId, DateTime.UtcNow.Add(grace));
+                        // Diagnostics: a hot-joiner's or a spectator's stall is its
+                        // own either way, so the grace neither absorbs a pause for it
+                        // nor lets one through.
+                        var wouldPause = !group.IsHotJoining(session.Id) && !group.IsSpectator(session.Id);
+                        _deferredBuffering[session.Id] = new DeferredBuffering(session, request, group.GroupId, DateTime.UtcNow.Add(grace), wouldPause);
                         _logger.LogDebug("Session {SessionId} started buffering in group {GroupId}, holding back the report for {Grace}.", session.Id, group.GroupId.ToString(), grace);
                     }
                 }
@@ -718,17 +722,17 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             }
         }
 
-        private bool CancelDeferredBuffering(string sessionId)
+        private DeferredBuffering CancelDeferredBuffering(string sessionId)
         {
             lock (_deferredBufferingLock)
             {
-                if (_deferredBuffering.Remove(sessionId))
+                if (_deferredBuffering.Remove(sessionId, out var deferred))
                 {
                     _logger.LogDebug("Session {SessionId} recovered within the buffering grace period.", sessionId);
-                    return true;
+                    return deferred;
                 }
 
-                return false;
+                return null;
             }
         }
 
@@ -804,8 +808,14 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     if (group.State.Equals(GroupStateType.Playing))
                     {
                         _logger.LogDebug("Session {SessionId} did not recover within the grace period, pausing group {GroupId}.", deferred.Session.Id, group.GroupId.ToString());
-                        _counters.BufferingApplied();
                         group.HandleRequest(deferred.Session, deferred.Request, CancellationToken.None);
+
+                        // Counted by outcome: the state machine absorbs a stall
+                        // that is not the group's to wait for.
+                        if (!group.State.Equals(GroupStateType.Playing))
+                        {
+                            _counters.BufferingApplied();
+                        }
                     }
                 }
             }
@@ -951,12 +961,13 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// </summary>
         private sealed class DeferredBuffering
         {
-            public DeferredBuffering(SessionInfo session, BufferGroupRequest request, Guid groupId, DateTime applyAt)
+            public DeferredBuffering(SessionInfo session, BufferGroupRequest request, Guid groupId, DateTime applyAt, bool wouldPause)
             {
                 Session = session;
                 Request = request;
                 GroupId = groupId;
                 ApplyAt = applyAt;
+                WouldPause = wouldPause;
             }
 
             public SessionInfo Session { get; }
@@ -966,6 +977,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             public Guid GroupId { get; }
 
             public DateTime ApplyAt { get; }
+
+            public bool WouldPause { get; }
         }
     }
 }

@@ -88,6 +88,8 @@
                 var lastStatus = null;
                 var lastReport = null;
                 var refreshTimer = null;
+                var visible = false;
+                var inFlight = false;
 
                 function el(tag, text, style) {
                     var node = document.createElement(tag);
@@ -210,19 +212,33 @@
                     host.appendChild(el('div', 'Counting since ' + new Date(c.Since).toLocaleString() + '.', 'opacity:.8;margin-top:.4em'));
                 }
 
+                // One request at a time: the next is scheduled 5 s after the
+                // last one settles, so a slow server is not queued up on, and
+                // nothing is rendered or scheduled once the page is left.
                 function loadDiagnostics() {
-                    if (!page.isConnected) {
-                        clearInterval(refreshTimer);
-                        refreshTimer = null;
+                    refreshTimer = null;
+                    if (!visible || !page.isConnected || inFlight) {
                         return;
                     }
 
+                    inFlight = true;
                     ApiClient.getJSON(ApiClient.getUrl('SyncPlay/V2/Diagnostics')).then(function (report) {
+                        if (!visible) {
+                            return;
+                        }
+
                         lastReport = report;
                         renderGroups(report);
                         renderCounters(report.Counters);
                     }).catch(function () {
-                        page.querySelector('#SyncPlayV2Groups').textContent = 'Diagnostics unavailable.';
+                        if (visible) {
+                            page.querySelector('#SyncPlayV2Groups').textContent = 'Diagnostics unavailable.';
+                        }
+                    }).then(function () {
+                        inFlight = false;
+                        if (visible && !refreshTimer) {
+                            refreshTimer = setTimeout(loadDiagnostics, 5000);
+                        }
                     });
                 }
 
@@ -254,10 +270,23 @@
                                 RunTimeSeconds: g.RunTimeSeconds,
                                 QueueLength: g.QueueLength,
                                 Members: g.Members.map(function (m) {
-                                    var copy = Object.assign({}, m);
-                                    copy.UserName = alias(m.UserName);
-                                    delete copy.DeviceName;
-                                    return copy;
+                                    return {
+                                        UserName: alias(m.UserName),
+                                        Client: m.Client,
+                                        ProtocolVersion: m.ProtocolVersion,
+                                        ExternalContent: m.ExternalContent,
+                                        Ping: m.Ping,
+                                        IsConnected: m.IsConnected,
+                                        DisconnectedSeconds: m.DisconnectedSeconds,
+                                        IsBuffering: m.IsBuffering,
+                                        BufferingForLoad: m.BufferingForLoad,
+                                        BufferingSeconds: m.BufferingSeconds,
+                                        IgnoreGroupWait: m.IgnoreGroupWait,
+                                        IgnoredByTimeout: m.IgnoredByTimeout,
+                                        Spectator: m.Spectator,
+                                        HotJoining: m.HotJoining,
+                                        CorrectionAttempts: m.CorrectionAttempts
+                                    };
                                 })
                             };
                         })
@@ -269,6 +298,12 @@
                         return;
                     }
 
+                    // The timings come from the status document, which loads
+                    // separately and may not have arrived (or may have failed).
+                    (lastStatus ? Promise.resolve() : loadStatus()).then(copy);
+                });
+
+                function copy() {
                     var text = JSON.stringify(anonymized(), null, 2);
                     var box = page.querySelector('#SyncPlayV2ReportText');
                     function showBox() {
@@ -284,12 +319,12 @@
                     } else {
                         showBox();
                     }
-                });
+                }
 
                 function loadStatus() {
                     var status = page.querySelector('#SyncPlayV2Status');
                     var detail = page.querySelector('#SyncPlayV2StatusDetail');
-                    ApiClient.getJSON(ApiClient.getUrl('SyncPlay/V2/Status')).then(function (s) {
+                    return ApiClient.getJSON(ApiClient.getUrl('SyncPlay/V2/Status')).then(function (s) {
                         lastStatus = s;
                         if (s.EngineActive) {
                             status.textContent = 'Active: SyncPlay v2 ' + (s.PluginVersion || '') + ' is serving SyncPlay.';
@@ -324,14 +359,17 @@
                         Dashboard.hideLoadingMsg();
                     }).catch(fail('load'));
                     loadStatus();
-                    loadDiagnostics();
-                    if (!refreshTimer) {
-                        refreshTimer = setInterval(loadDiagnostics, 5000);
+                    visible = true;
+                    if (refreshTimer) {
+                        clearTimeout(refreshTimer);
                     }
+
+                    loadDiagnostics();
                 });
 
                 page.addEventListener('pagehide', function () {
-                    clearInterval(refreshTimer);
+                    visible = false;
+                    clearTimeout(refreshTimer);
                     refreshTimer = null;
                 });
 

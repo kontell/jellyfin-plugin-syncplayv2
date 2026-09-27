@@ -89,6 +89,66 @@ public sealed class ManagerDiagnosticsTests : IDisposable
         Assert.Equal(_counters.Since, report.Counters.Since);
     }
 
+    // The shipped grace (2 s) plus the sweep's 1 s period and some slack.
+    private static readonly TimeSpan PastTheGrace = TimeSpan.FromSeconds(3.5);
+
+    [Fact]
+    public void ARebufferPastTheGracePausesTheGroupAndIsCountedOnce()
+    {
+        var (_, b, playlistItemId) = StartPlaying();
+
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        Thread.Sleep(PastTheGrace);
+
+        var report = _manager.GetDiagnostics();
+        Assert.Equal(GroupStateType.Waiting, report.Groups.Single().State);
+        Assert.Equal(1, report.Counters.BufferingApplied);
+        Assert.Equal(0, report.Counters.BufferingRecovered);
+    }
+
+    [Fact]
+    public void ASpectatorsRebufferIsNeitherAbsorbedNorAppliedByTheGrace()
+    {
+        // The grace holds back any Buffer while the group plays, but a
+        // spectator's stall never pauses the group: counting it as a pause
+        // let through, or one the grace spared everyone, is counting a
+        // pause that could not happen.
+        var (_, b, playlistItemId) = StartPlaying();
+        _manager.HandleRequest(b, new IgnoreWaitGroupRequest(true), CancellationToken.None);
+
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        _manager.HandleRequest(b, new ReadyGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        Thread.Sleep(PastTheGrace);
+
+        var report = _manager.GetDiagnostics();
+        Assert.Equal(GroupStateType.Playing, report.Groups.Single().State);
+        Assert.Equal(0, report.Counters.BufferingApplied);
+        Assert.Equal(0, report.Counters.BufferingRecovered);
+    }
+
+    private (SessionInfo A, SessionInfo B, Guid PlaylistItemId) StartPlaying()
+    {
+        var (a, aSent) = Session("a");
+        var (b, _) = Session("b");
+        var group = _manager.NewGroup(a, new NewGroupRequest("manager"), CancellationToken.None);
+        _manager.JoinGroup(b, new JoinGroupRequest(group.GroupId), CancellationToken.None);
+
+        var item = Guid.NewGuid();
+        Assert.True(ContentDescriptor.TryCreate("harness", "item", "Item", TimeSpan.TicksPerHour, null, out var descriptor));
+        _manager.HandleRequestWithContent(
+            a,
+            new PlayGroupRequest(new[] { item }, 0, 0),
+            new Dictionary<Guid, ContentDescriptor> { [item] = descriptor! },
+            CancellationToken.None);
+
+        var playlistItemId = PlayingPlaylistItemId(aSent);
+        _manager.HandleRequest(a, new ReadyGroupRequest(DateTime.UtcNow, 0, false, playlistItemId), CancellationToken.None);
+        _manager.HandleRequest(b, new ReadyGroupRequest(DateTime.UtcNow, 0, false, playlistItemId), CancellationToken.None);
+        Assert.Equal(GroupStateType.Playing, _manager.GetDiagnostics().Groups.Single().State);
+        return (a, b, playlistItemId);
+    }
+
     private (SessionInfo Session, RecordingController Sent) Session(string name)
     {
         var controller = new RecordingController();
