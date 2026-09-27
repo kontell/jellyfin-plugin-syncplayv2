@@ -1,6 +1,8 @@
 using System;
 using System.Linq;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Net;
@@ -33,10 +35,18 @@ public class TimeSyncSocket : IWebSocketManager
     /// </summary>
     private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(10);
 
-    /// <summary>Concurrent time-sync sockets per client and device.</summary>
-    private const int SocketsPerDevice = 4;
+    /// <summary>
+    /// Concurrent time-sync sockets per access token. Client and device id
+    /// are whatever the caller puts in its Authorization header, so a limit
+    /// on them is a limit a caller picks its way around; the token is the
+    /// credential the server validated.
+    /// </summary>
+    private const int SocketsPerToken = 4;
 
-    private readonly ConnectionLimiter _limiter = new(SocketsPerDevice);
+    /// <summary>Concurrent time-sync sockets over the whole server.</summary>
+    private const int SocketsInTotal = 256;
+
+    private readonly ConnectionLimiter _limiter = new(SocketsPerToken, SocketsInTotal);
 
     private readonly IServiceProvider _serviceProvider;
     private readonly IAuthService _authService;
@@ -87,10 +97,10 @@ public class TimeSyncSocket : IWebSocketManager
             return;
         }
 
-        var key = auth.Client + "|" + auth.DeviceId;
+        var key = LimitKey(auth);
         if (!_limiter.TryEnter(key))
         {
-            _logger.LogWarning("Refusing a time-sync socket for device {DeviceId} ({Client}): {Limit} already open.", auth.DeviceId, auth.Client, SocketsPerDevice);
+            _logger.LogWarning("Refusing a time-sync socket for device {DeviceId} ({Client}): {PerToken} already open for its token, or {Total} on the server.", auth.DeviceId, auth.Client, SocketsPerToken, SocketsInTotal);
             context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
             return;
         }
@@ -106,6 +116,13 @@ public class TimeSyncSocket : IWebSocketManager
             _limiter.Exit(key);
         }
     }
+
+    /// <summary>
+    /// The limiter's key: a hash of the access token, so the token itself is
+    /// not kept in memory longer than the request.
+    /// </summary>
+    private static string LimitKey(AuthorizationInfo auth)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(auth.Token ?? auth.UserId.ToString())));
 
     private async Task Serve(WebSocket socket)
     {

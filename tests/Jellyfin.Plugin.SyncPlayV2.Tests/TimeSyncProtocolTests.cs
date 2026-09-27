@@ -85,7 +85,7 @@ public class TimeSyncProtocolTests
     [Fact]
     public void TheLimiterCapsConnectionsPerKeyAndFreesThem()
     {
-        var limiter = new ConnectionLimiter(2);
+        var limiter = new ConnectionLimiter(2, int.MaxValue);
 
         Assert.True(limiter.TryEnter("web|device-1"));
         Assert.True(limiter.TryEnter("web|device-1"));
@@ -105,7 +105,7 @@ public class TimeSyncProtocolTests
     [Fact]
     public void TheLimiterHoldsUnderContention()
     {
-        var limiter = new ConnectionLimiter(4);
+        var limiter = new ConnectionLimiter(4, int.MaxValue);
 
         var entered = Enumerable.Range(0, 200)
             .AsParallel()
@@ -115,5 +115,23 @@ public class TimeSyncProtocolTests
 
         Parallel.For(0, 4, _ => limiter.Exit("web|device-1"));
         Assert.Equal(0, limiter.Count("web|device-1"));
+    }
+
+    [Fact]
+    public void TheLimiterCapsTheTotalOverAllKeys()
+    {
+        // Many tokens together are bounded too: a slot refused for the
+        // total is not taken from the key either.
+        var limiter = new ConnectionLimiter(4, 3);
+
+        Assert.True(limiter.TryEnter("a"));
+        Assert.True(limiter.TryEnter("b"));
+        Assert.True(limiter.TryEnter("c"));
+        Assert.False(limiter.TryEnter("d"));
+        Assert.Equal(0, limiter.Count("d"));
+
+        limiter.Exit("b");
+        Assert.True(limiter.TryEnter("d"));
+        Assert.Equal(3, limiter.Total);
     }
 }

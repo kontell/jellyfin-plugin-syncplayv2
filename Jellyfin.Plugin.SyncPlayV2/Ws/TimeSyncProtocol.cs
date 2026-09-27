@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Text.Json;
+using System.Threading;
 
 namespace Jellyfin.Plugin.SyncPlayV2.Ws;
 
@@ -118,35 +119,51 @@ public sealed class MessageAssembler
 }
 
 /// <summary>
-/// Caps concurrent connections per key. A client needs one time-sync socket;
-/// a few allow a reconnect to overlap the socket it replaces. A client that
-/// opens them in a loop without closing any is refused instead of holding a
-/// server connection each until the idle timeout reaps it.
+/// Caps concurrent connections per key and in total. A client needs one
+/// time-sync socket; a few allow a reconnect to overlap the socket it
+/// replaces. A client that opens them in a loop without closing any is
+/// refused instead of holding a server connection each until the idle
+/// timeout reaps it, and the total bounds what many credentials together
+/// can hold.
 /// </summary>
 public sealed class ConnectionLimiter
 {
     private readonly int _perKey;
+    private readonly int _total;
     private readonly ConcurrentDictionary<string, int> _counts = new(StringComparer.OrdinalIgnoreCase);
+    private int _held;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConnectionLimiter"/> class.
     /// </summary>
     /// <param name="perKey">The most concurrent connections per key.</param>
-    public ConnectionLimiter(int perKey)
+    /// <param name="total">The most concurrent connections over all keys.</param>
+    public ConnectionLimiter(int perKey, int total)
     {
         _perKey = perKey;
+        _total = total;
     }
 
-    /// <summary>Takes a slot for the key, if one is free.</summary>
-    /// <param name="key">The key (client and device).</param>
+    /// <summary>Gets the connections currently held over all keys.</summary>
+    public int Total => Volatile.Read(ref _held);
+
+    /// <summary>Takes a slot for the key, if one is free for the key and in total.</summary>
+    /// <param name="key">The key.</param>
     /// <returns>Whether a slot was taken; each true must be matched by <see cref="Exit"/>.</returns>
     public bool TryEnter(string key)
     {
+        if (Interlocked.Increment(ref _held) > _total)
+        {
+            Interlocked.Decrement(ref _held);
+            return false;
+        }
+
         while (true)
         {
             var current = _counts.GetOrAdd(key, 0);
             if (current >= _perKey)
             {
+                Interlocked.Decrement(ref _held);
                 return false;
             }
 
@@ -167,11 +184,13 @@ public sealed class ConnectionLimiter
             {
                 if (_counts.TryRemove(new System.Collections.Generic.KeyValuePair<string, int>(key, current)))
                 {
+                    Interlocked.Decrement(ref _held);
                     return;
                 }
             }
             else if (_counts.TryUpdate(key, current - 1, current))
             {
+                Interlocked.Decrement(ref _held);
                 return;
             }
         }
