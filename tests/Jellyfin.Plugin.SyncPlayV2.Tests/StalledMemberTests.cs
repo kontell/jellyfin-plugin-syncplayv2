@@ -100,4 +100,90 @@ public class StalledMemberTests
 
         Assert.Empty(harness.Group.GetStalledBufferingSessions(Timeout));
     }
+
+    [Fact]
+    public void AMemberTheGroupGaveUpOnThatBuffersOnAStaleItemIsWaitedForAgain()
+    {
+        // The wrong-item check answers with the current item and returns;
+        // the member must be waited for again before it, or the group enters
+        // a Waiting that neither IsBuffering() nor the sweep counts it in.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+
+        b.Buffer(Minute);
+        b.TimeOut();
+
+        b.Buffer(Minute, playlistItemId: Guid.NewGuid());
+
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        Assert.True(harness.Group.IsBuffering(), "the group is not waiting for anyone");
+
+        Thread.Sleep(Timeout + TimeSpan.FromMilliseconds(100));
+        Assert.Contains(harness.Group.GetStalledBufferingSessions(Timeout), session => session.Id == b.Session.Id);
+    }
+
+    [Fact]
+    public void ASpectatorsBufferingDoesNotStopAPausedGroup()
+    {
+        // Paused moved every Buffer to Waiting unconditionally, a spectator's
+        // included, and the group did not wait for it there either.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+        a.Pause();
+        Assert.Equal(GroupStateType.Paused, harness.State);
+
+        b.IgnoreWait(true);
+        b.Buffer(Minute, isPlaying: false);
+
+        Assert.Equal(GroupStateType.Paused, harness.State);
+    }
+
+    [Fact]
+    public void ASpectatorsBufferingWhileTheGroupWaitsIsNotWaitedFor()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        var c = harness.Join("c");
+        harness.StartPlaying(new[] { a, b, c }, Minute);
+        c.IgnoreWait(true);
+
+        a.Buffer(Minute);
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        c.Buffer(Minute);
+
+        a.Ready(Minute, isPlaying: false);
+
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        Assert.False(c.IsListedBuffering);
+    }
+
+    [Fact]
+    public void ASpectatorsStallLeavesNoBufferingFlagBehind()
+    {
+        // Nothing outside Waiting clears IsBuffering on a Ready from a member
+        // that is neither hot-joining nor timed out, so a recorded spectator
+        // stall stayed listed for good — and counted as soon as the member
+        // followed the group again.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+        b.IgnoreWait(true);
+
+        b.Buffer(Minute);
+        b.Ready(Minute, isPlaying: true);
+
+        Assert.False(b.IsListedBuffering);
+
+        b.IgnoreWait(false);
+        a.Buffer(Minute);
+        a.Ready(Minute, isPlaying: false);
+
+        Assert.Equal(GroupStateType.Playing, harness.State);
+    }
 }

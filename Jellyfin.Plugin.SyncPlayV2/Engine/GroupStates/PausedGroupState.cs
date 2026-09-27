@@ -115,6 +115,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
         /// <inheritdoc />
         public override void HandleRequest(BufferGroupRequest request, IGroupStateContext context, GroupStateType prevState, SessionInfo session, CancellationToken cancellationToken)
         {
+            if (IsSpectatorStall(context, session))
+            {
+                return;
+            }
+
             // Change state.
             var waitingState = new WaitingGroupState(LoggerFactory);
             context.SetState(waitingState);

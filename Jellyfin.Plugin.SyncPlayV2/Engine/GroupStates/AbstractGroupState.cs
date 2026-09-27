@@ -197,6 +197,22 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
             }
         }
 
+        /// <summary>
+        /// Fix divergence (VENDORED.md, #14): a spectator's stall is its own.
+        /// The group does not wait for a member that asked not to be waited
+        /// for, so a Waiting entered for its Buffer is one nothing can end, and
+        /// the stall is not recorded either: no Ready handler outside Waiting
+        /// clears IsBuffering for a member that is neither hot-joining nor
+        /// timed out, so the flag would outlive the stall.
+        /// </summary>
+        /// <param name="context">The context of the state.</param>
+        /// <param name="session">The session that reported Buffer.</param>
+        /// <returns><c>true</c> if the Buffer is absorbed and the state must not change.</returns>
+        protected static bool IsSpectatorStall(IGroupStateContext context, SessionInfo session)
+        {
+            return context is IGroupStateContextV2 v2 && v2.IsSpectator(session.Id);
+        }
+
         /// <inheritdoc />
         public virtual void HandleRequest(NextItemGroupRequest request, IGroupStateContext context, GroupStateType prevState, SessionInfo session, CancellationToken cancellationToken)
         {
