@@ -99,6 +99,10 @@ public class StalledMemberTests
         a.Seek(2 * Minute);
 
         Assert.Empty(harness.Group.GetStalledBufferingSessions(Timeout));
+
+        // Restarted, not cancelled: the member still times out on the new wait.
+        Thread.Sleep(Timeout + TimeSpan.FromMilliseconds(100));
+        Assert.Contains(harness.Group.GetStalledBufferingSessions(Timeout), session => session.Id == b.Session.Id);
     }
 
     [Fact]
@@ -185,5 +189,24 @@ public class StalledMemberTests
         a.Ready(Minute, isPlaying: false);
 
         Assert.Equal(GroupStateType.Playing, harness.State);
+    }
+
+    [Fact]
+    public void ANewItemRestartsTheClockForMembersAlreadyBuffering()
+    {
+        // Same rule from another of SetAllBuffering's callers: every
+        // group-wide wait restarts the clock, not only a Seek's.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+
+        b.Buffer(Minute);
+        Thread.Sleep(Timeout + Timeout);
+
+        harness.Play(a);
+
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        Assert.Empty(harness.Group.GetStalledBufferingSessions(Timeout));
     }
 }
