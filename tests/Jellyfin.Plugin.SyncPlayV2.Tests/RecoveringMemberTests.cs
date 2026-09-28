@@ -15,6 +15,10 @@ public class RecoveringMemberTests
 
     private static readonly long NineSecondsBehind = Minute - TimeSpan.FromSeconds(9).Ticks;
 
+    private static readonly long SlightlyBehind = Minute - TimeSpan.FromMilliseconds(150).Ticks;
+
+    private static readonly long SlightlyAhead = Minute + TimeSpan.FromMilliseconds(150).Ticks;
+
     [Fact]
     public void ARecoveringMemberThatIsAlreadyPlayingIsToldTheGroupResumed()
     {
@@ -101,6 +105,84 @@ public class RecoveringMemberTests
         Assert.Equal(GroupStateType.Waiting, harness.State);
 
         a.Ready(NineSecondsBehind, isPlaying: true);
+
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        Assert.Contains(b.Commands, command => command.Command == "Unpause");
+        Assert.Contains(a.Commands, command => command.Command == "Unpause");
+    }
+
+    [Fact]
+    public void AV2MemberAlreadyPlayingSlightlyBehindDoesNotGetTheLateResumeUnpause()
+    {
+        // With 250 ms pings, 150 ms behind takes the late-resume branch.
+        // Kofin would pre-align to the future command's position on receipt.
+        var harness = new GroupHarness();
+        var a = harness.Join("a", protocolVersion: 2);
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+        a.Ping(250);
+        b.Ping(250);
+
+        a.Buffer(Minute, isPlaying: true);
+        a.Ready(SlightlyBehind, isPlaying: true);
+
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        Assert.Contains(b.Commands, command => command.Command == "Unpause");
+        Assert.DoesNotContain(a.Commands, command => command.Command == "Unpause");
+    }
+
+    [Fact]
+    public void AV1MemberAlreadyPlayingSlightlyBehindGetsTheLateResumeUnpause()
+    {
+        // Jellyfin Web needs this command to clear its schedule-play icon.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b", protocolVersion: 2);
+        harness.StartPlaying(new[] { a, b }, Minute);
+        a.Ping(250);
+        b.Ping(250);
+
+        a.Buffer(Minute, isPlaying: true);
+        a.Ready(SlightlyBehind, isPlaying: true);
+
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        Assert.Contains(b.Commands, command => command.Command == "Unpause");
+        Assert.Contains(a.Commands, command => command.Command == "Unpause");
+    }
+
+    [Fact]
+    public void AV2MemberPausedSlightlyBehindGetsTheLateResumeUnpause()
+    {
+        // A paused member needs the command to begin playback.
+        var harness = new GroupHarness();
+        var a = harness.Join("a", protocolVersion: 2);
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+        a.Ping(250);
+        b.Ping(250);
+
+        a.Buffer(Minute, isPlaying: true);
+        a.Ready(SlightlyBehind, isPlaying: false);
+
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        Assert.Contains(b.Commands, command => command.Command == "Unpause");
+        Assert.Contains(a.Commands, command => command.Command == "Unpause");
+    }
+
+    [Fact]
+    public void AV2MemberAlreadyPlayingSlightlyAheadStillGetsTheLateResumeUnpause()
+    {
+        // The late-resume branch also handles a member ahead of the group.
+        // Keep its Unpause so Kofin can align backward as before.
+        var harness = new GroupHarness();
+        var a = harness.Join("a", protocolVersion: 2);
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+        a.Ping(250);
+        b.Ping(250);
+
+        a.Buffer(Minute, isPlaying: true);
+        a.Ready(SlightlyAhead, isPlaying: true);
 
         Assert.Equal(GroupStateType.Playing, harness.State);
         Assert.Contains(b.Commands, command => command.Command == "Unpause");
