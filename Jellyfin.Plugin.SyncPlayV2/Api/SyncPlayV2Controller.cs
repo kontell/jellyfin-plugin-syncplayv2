@@ -1,8 +1,11 @@
 using System.Net.Mime;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.SyncPlayV2.Configuration;
 using Jellyfin.Plugin.SyncPlayV2.Engine;
 using MediaBrowser.Common.Api;
+using MediaBrowser.Controller.Net;
+using MediaBrowser.Controller.SyncPlay;
 using MediaBrowser.Controller.SyncPlay.PlaybackRequests;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -23,15 +26,55 @@ public class SyncPlayV2Controller : ControllerBase
     private readonly ISyncPlayManagerV2 _syncPlayManager;
     private readonly ProtocolVersionRegistry _versions;
     private readonly SessionResolver _sessions;
+    private readonly ISyncPlayManager _resolvedManager;
+    private readonly IWebSocketManager _resolvedWebSocketManager;
 
     public SyncPlayV2Controller(
         ISyncPlayManagerV2 syncPlayManager,
         ProtocolVersionRegistry versions,
-        SessionResolver sessions)
+        SessionResolver sessions,
+        ISyncPlayManager resolvedManager,
+        IWebSocketManager resolvedWebSocketManager)
     {
         _syncPlayManager = syncPlayManager;
         _versions = versions;
         _sessions = sessions;
+        _resolvedManager = resolvedManager;
+        _resolvedWebSocketManager = resolvedWebSocketManager;
+    }
+
+    /// <summary>
+    /// The plugin's own health for the dashboard page: whether the DI shadows
+    /// resolved to the plugin (the same check SyncPlayV2Startup logs at every
+    /// start, answerable without reading the log) and the timings in effect
+    /// after clamping, which is what the saved configuration actually does.
+    /// </summary>
+    /// <response code="200">Status returned.</response>
+    /// <returns>The status document.</returns>
+    [HttpGet("V2/Status")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [Authorize(Policy = Policies.RequiresElevation)]
+    public ActionResult Status()
+    {
+        var managerActive = _resolvedManager is SyncPlayManagerV2;
+        var webSocketActive = _resolvedWebSocketManager is Ws.TimeSyncSocket;
+        var timings = EngineTimings.Current;
+
+        return Ok(new
+        {
+            EngineActive = managerActive && webSocketActive,
+            SyncPlayManager = _resolvedManager.GetType().FullName,
+            WebSocketManager = _resolvedWebSocketManager.GetType().FullName,
+            PluginVersion = typeof(SyncPlayV2Controller).Assembly.GetName().Version?.ToString(),
+            Timings = new
+            {
+                StallTimeoutSeconds = timings.StallTimeout.TotalSeconds,
+                LoadTimeoutSeconds = timings.LoadTimeout.TotalSeconds,
+                BufferingGraceSeconds = timings.BufferingGrace.TotalSeconds,
+                DisconnectGraceSeconds = timings.DisconnectGrace.TotalSeconds,
+                PositionBeaconSeconds = timings.PositionBeaconInterval.TotalSeconds,
+            },
+        });
     }
 
     /// <summary>

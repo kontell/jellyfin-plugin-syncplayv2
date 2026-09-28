@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using Jellyfin.Plugin.SyncPlayV2.Configuration;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
+using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
 
 namespace Jellyfin.Plugin.SyncPlayV2;
@@ -13,7 +15,7 @@ namespace Jellyfin.Plugin.SyncPlayV2;
 /// ISyncPlayManager while installed; disable the plugin to restore stock
 /// SyncPlay.
 /// </summary>
-public class SyncPlayV2Plugin : BasePlugin<PluginConfiguration>
+public class SyncPlayV2Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
     public SyncPlayV2Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer)
         : base(applicationPaths, xmlSerializer)
@@ -25,6 +27,16 @@ public class SyncPlayV2Plugin : BasePlugin<PluginConfiguration>
     /// Gets the plugin instance.
     /// </summary>
     public static SyncPlayV2Plugin? Instance { get; private set; }
+
+    /// <inheritdoc />
+    public IEnumerable<PluginPageInfo> GetPages()
+    {
+        yield return new PluginPageInfo
+        {
+            Name = "SyncPlayV2",
+            EmbeddedResourcePath = GetType().Namespace + ".Configuration.configPage.html",
+        };
+    }
 
     /// <inheritdoc />
     public override Guid Id => new Guid("181f9934-bf71-4941-974e-a5f2cdcccc4e");

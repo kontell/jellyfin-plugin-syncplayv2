@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SyncPlay v2</title>
+</head>
+<body>
+    <div id="SyncPlayV2ConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+        <div data-role="content">
+            <div class="content-primary">
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">Status</h2>
+                    <p id="SyncPlayV2Status">Checking…</p>
+                    <div class="fieldDescription" id="SyncPlayV2StatusDetail"></div>
+                </div>
+
+                <form id="SyncPlayV2ConfigForm">
+                    <div class="verticalSection">
+                        <h2 class="sectionTitle">Joining</h2>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="HotJoin" />
+                                <span>Hot join</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">Members whose client speaks SyncPlay v2 join a playing group without pausing everyone else. Stock jellyfin-web is v1 and always uses the classic wait.</div>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h2 class="sectionTitle">Waiting for members</h2>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="LoadTimeoutSeconds" label="Load timeout (seconds)" min="3" max="300" step="1" />
+                            <div class="fieldDescription">How long the group waits for a member to load a new item, a restarted item or the group's item when joining, before playing on without it. Starting a transcode can take a while. 3–300, default 30.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="StallTimeoutSeconds" label="Stall timeout (seconds)" min="3" max="120" step="1" />
+                            <div class="fieldDescription">How long the group waits for a member that stalled on its own, or is catching up after a seek, before playing on without it. The member is waited for again as soon as it reports. 3–120, default 10.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="BufferingGraceSeconds" label="Buffering grace (seconds)" min="0" max="10" step="1" />
+                            <div class="fieldDescription">A rebuffer shorter than this does not pause anyone else. 0 pauses the group on every rebuffer. 0–10, default 2.</div>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h2 class="sectionTitle">Connections</h2>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="DisconnectGraceSeconds" label="Disconnect grace (seconds)" min="10" max="600" step="1" />
+                            <div class="fieldDescription">A member whose connection drops keeps its place this long and resumes where the group is if it comes back. 10–600, default 90.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="PositionBeaconSeconds" label="Position beacon interval (seconds)" min="1" max="60" step="1" />
+                            <div class="fieldDescription">How often v2 clients are told the group's position while playing. 1–60, default 5.</div>
+                        </div>
+                    </div>
+
+                    <div class="fieldDescription">Changes apply to running groups from the next check, about a second after saving. No restart needed.</div>
+                    <br />
+                    <button is="emby-button" type="submit" class="raised button-submit block">
+                        <span>Save</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <script type="text/javascript">
+            (function () {
+                var pluginId = '181f9934-bf71-4941-974e-a5f2cdcccc4e';
+                var numbers = ['LoadTimeoutSeconds', 'StallTimeoutSeconds', 'BufferingGraceSeconds', 'DisconnectGraceSeconds', 'PositionBeaconSeconds'];
+                var page = document.querySelector('#SyncPlayV2ConfigPage');
+
+                function loadStatus() {
+                    var status = page.querySelector('#SyncPlayV2Status');
+                    var detail = page.querySelector('#SyncPlayV2StatusDetail');
+                    ApiClient.getJSON(ApiClient.getUrl('SyncPlay/V2/Status')).then(function (s) {
+                        if (s.EngineActive) {
+                            status.textContent = 'Active: SyncPlay v2 ' + (s.PluginVersion || '') + ' is serving SyncPlay.';
+                        } else {
+                            status.textContent = 'NOT ACTIVE: the server is running stock SyncPlay. A server update likely changed how services are registered; check the server log for [SyncPlayV2].';
+                        }
+
+                        var t = s.Timings;
+                        detail.textContent = 'In effect: load ' + t.LoadTimeoutSeconds + ' s, stall ' + t.StallTimeoutSeconds
+                            + ' s, buffering grace ' + t.BufferingGraceSeconds + ' s, disconnect grace ' + t.DisconnectGraceSeconds
+                            + ' s, beacons every ' + t.PositionBeaconSeconds + ' s.';
+                    }).catch(function () {
+                        status.textContent = 'Status unavailable.';
+                        detail.textContent = '';
+                    });
+                }
+
+                page.addEventListener('pageshow', function () {
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                        page.querySelector('#HotJoin').checked = config.HotJoin !== false;
+                        numbers.forEach(function (id) {
+                            page.querySelector('#' + id).value = config[id];
+                        });
+                        Dashboard.hideLoadingMsg();
+                    });
+                    loadStatus();
+                });
+
+                page.querySelector('#SyncPlayV2ConfigForm').addEventListener('submit', function (e) {
+                    e.preventDefault();
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                        config.HotJoin = page.querySelector('#HotJoin').checked;
+                        numbers.forEach(function (id) {
+                            var value = parseInt(page.querySelector('#' + id).value, 10);
+                            if (!isNaN(value)) {
+                                config[id] = value;
+                            }
+                        });
+                        return ApiClient.updatePluginConfiguration(pluginId, config);
+                    }).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                        loadStatus();
+                    });
+                    return false;
+                });
+            })();
+        </script>
+    </div>
+</body>
+</html>
