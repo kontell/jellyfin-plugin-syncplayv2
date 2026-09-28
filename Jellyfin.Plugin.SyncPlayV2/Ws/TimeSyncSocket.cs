@@ -1,7 +1,6 @@
 using System;
 using System.Linq;
 using System.Net.WebSockets;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Net;
@@ -23,6 +22,21 @@ namespace Jellyfin.Plugin.SyncPlayV2.Ws;
 public class TimeSyncSocket : IWebSocketManager
 {
     private static readonly PathString Path = new("/SyncPlay/TimeSync");
+
+    /// <summary>How long a socket may stay silent before it is closed.</summary>
+    private static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(90);
+
+    /// <summary>
+    /// How long a reply or a close may take. A client that stops reading
+    /// fills the send buffer, and a send with no deadline then never returns,
+    /// holding the connection past the idle timeout, which only covers receives.
+    /// </summary>
+    private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>Concurrent time-sync sockets per client and device.</summary>
+    private const int SocketsPerDevice = 4;
+
+    private readonly ConnectionLimiter _limiter = new(SocketsPerDevice);
 
     private readonly IServiceProvider _serviceProvider;
     private readonly IAuthService _authService;
@@ -73,16 +87,40 @@ public class TimeSyncSocket : IWebSocketManager
             return;
         }
 
-        using var socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
-        _logger.LogDebug("Time-sync socket open for device {DeviceId}.", auth.DeviceId);
+        var key = auth.Client + "|" + auth.DeviceId;
+        if (!_limiter.TryEnter(key))
+        {
+            _logger.LogWarning("Refusing a time-sync socket for device {DeviceId} ({Client}): {Limit} already open.", auth.DeviceId, auth.Client, SocketsPerDevice);
+            context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+            return;
+        }
 
-        var buffer = new byte[4096];
+        try
+        {
+            using var socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
+            _logger.LogDebug("Time-sync socket open for device {DeviceId}.", auth.DeviceId);
+            await Serve(socket).ConfigureAwait(false);
+        }
+        finally
+        {
+            _limiter.Exit(key);
+        }
+    }
+
+    private async Task Serve(WebSocket socket)
+    {
+        var buffer = new byte[1024];
+        var assembler = new MessageAssembler(TimeSyncProtocol.MaxMessageBytes);
         try
         {
             while (socket.State == WebSocketState.Open)
             {
-                using var idle = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-                var result = await socket.ReceiveAsync(buffer.AsMemory(), idle.Token).ConfigureAwait(false);
+                ValueWebSocketReceiveResult result;
+                using (var idle = new CancellationTokenSource(IdleTimeout))
+                {
+                    result = await socket.ReceiveAsync(buffer.AsMemory(), idle.Token).ConfigureAwait(false);
+                }
+
                 var receivedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
                 if (result.MessageType == WebSocketMessageType.Close)
@@ -90,43 +128,27 @@ public class TimeSyncSocket : IWebSocketManager
                     break;
                 }
 
-                long t0;
-                try
-                {
-                    using var doc = JsonDocument.Parse(buffer.AsMemory(0, result.Count));
-                    if (!doc.RootElement.TryGetProperty("Data", out var data) || data.ValueKind != JsonValueKind.Number)
-                    {
-                        continue; // tolerant: unknown frames are ignored
-                    }
-
-                    t0 = data.GetInt64();
-                }
-                catch (JsonException)
+                // Tolerant: incomplete, oversized and unknown messages are ignored.
+                if (!assembler.Append(buffer.AsSpan(0, result.Count), result.EndOfMessage, out var message)
+                    || !TimeSyncProtocol.TryReadT0(message, out var t0))
                 {
                     continue;
                 }
 
-                var reply = JsonSerializer.SerializeToUtf8Bytes(new
-                {
-                    MessageType = "TimeSync",
-                    Data = new
-                    {
-                        T0 = t0,
-                        T1 = receivedAt,
-                        T2 = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                    },
-                });
-                await socket.SendAsync(reply, WebSocketMessageType.Text, true, CancellationToken.None).ConfigureAwait(false);
+                var reply = TimeSyncProtocol.Reply(t0, receivedAt, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                using var send = new CancellationTokenSource(SendTimeout);
+                await socket.SendAsync(reply, WebSocketMessageType.Text, true, send.Token).ConfigureAwait(false);
             }
 
             if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
             {
-                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None).ConfigureAwait(false);
+                using var close = new CancellationTokenSource(SendTimeout);
+                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, close.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
         {
-            _logger.LogDebug("Time-sync socket idle-closed.");
+            _logger.LogDebug("Time-sync socket idle-closed or stopped reading.");
         }
         catch (WebSocketException ex)
         {
