@@ -80,4 +80,24 @@ public class StalledMemberTests
         Assert.Equal(GroupStateType.Playing, harness.State);
         Assert.DoesNotContain(a.Commands, command => command.Command == "Pause");
     }
+
+    [Fact]
+    public void ANewWaitRestartsTheClockForMembersAlreadyBuffering()
+    {
+        // A Seek (or a new item) starts a new wait: everyone reloads. A
+        // member that happened to be buffering already kept its old
+        // BufferingSince, so the sweep could give up on it the moment the
+        // new wait began.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+
+        b.Buffer(Minute);
+        Thread.Sleep(Timeout + Timeout);
+
+        a.Seek(2 * Minute);
+
+        Assert.Empty(harness.Group.GetStalledBufferingSessions(Timeout));
+    }
 }

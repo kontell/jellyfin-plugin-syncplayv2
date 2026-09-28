@@ -1199,9 +1199,18 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <inheritdoc />
         public void SetAllBuffering(bool isBuffering)
         {
+            var now = DateTime.UtcNow;
             foreach (var session in _participants.Values)
             {
                 SetMemberBuffering(session, isBuffering);
+
+                // Fix divergence (VENDORED.md): a group-wide wait (Seek, new
+                // item) is a new wait for everyone, including a member that was
+                // already buffering — its old stall must not count against it.
+                if (isBuffering)
+                {
+                    session.BufferingSince = now;
+                }
             }
         }
 
