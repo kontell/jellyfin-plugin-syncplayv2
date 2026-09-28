@@ -26,6 +26,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<Wire.Sender>();
         serviceCollection.AddSingleton<ProtocolVersionRegistry>();
         serviceCollection.AddSingleton<Api.SessionResolver>();
+        serviceCollection.AddSingleton<Diagnostics.EngineCounters>();
 
         // One engine instance behind both interfaces; the second registration
         // shadows the core SyncPlayManager (which is then never constructed).

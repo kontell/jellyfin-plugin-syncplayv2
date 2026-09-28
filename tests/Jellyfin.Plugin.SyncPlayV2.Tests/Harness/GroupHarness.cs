@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.SyncPlayV2.Diagnostics;
 using Jellyfin.Plugin.SyncPlayV2.Engine;
 using Jellyfin.Plugin.SyncPlayV2.Wire;
 using MediaBrowser.Controller.Library;
@@ -49,8 +50,11 @@ internal sealed class GroupHarness
             _sessionManager,
             NullService<ILibraryManager>.Create(),
             new Sender(NullLogger<Sender>.Instance),
-            _versions);
+            _versions,
+            Counters);
     }
+
+    public EngineCounters Counters { get; } = new();
 
     public Group Group { get; }
 

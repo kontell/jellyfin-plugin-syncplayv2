@@ -12,6 +12,7 @@ using MediaBrowser.Controller.SyncPlay.PlaybackRequests;
 using MediaBrowser.Controller.SyncPlay.Requests;
 using MediaBrowser.Model.SyncPlay;
 using Jellyfin.Plugin.SyncPlayV2.Configuration;
+using Jellyfin.Plugin.SyncPlayV2.Diagnostics;
 using Jellyfin.Plugin.SyncPlayV2.Wire;
 using Microsoft.Extensions.Logging;
 
@@ -129,6 +130,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
         private readonly ProtocolVersionRegistry _versions;
 
+        private readonly EngineCounters _counters;
+
         /// <summary>
         /// Initializes a new instance of the <see cref="SyncPlayManager" /> class.
         /// </summary>
@@ -142,8 +145,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             ISessionManager sessionManager,
             ILibraryManager libraryManager,
             Sender sender,
-            ProtocolVersionRegistry versions)
+            ProtocolVersionRegistry versions,
+            EngineCounters counters)
         {
+            _counters = counters;
             _loggerFactory = loggerFactory;
             _userManager = userManager;
             _sessionManager = sessionManager;
@@ -186,7 +191,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     LeaveGroup(session, leaveGroupRequest, cancellationToken);
                 }
 
-                var group = new Group(_loggerFactory, _userManager, _sessionManager, _libraryManager, _sender, _versions);
+                var group = new Group(_loggerFactory, _userManager, _sessionManager, _libraryManager, _sender, _versions, _counters);
                 _groups[group.GroupId] = group;
 
                 if (!_sessionToGroupMap.TryAdd(session.Id, group))
@@ -387,6 +392,32 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         }
 
         /// <inheritdoc />
+        public DiagnosticsReport GetDiagnostics()
+        {
+            // Feature divergence (VENDORED.md): the diagnostics page.
+            var report = new DiagnosticsReport
+            {
+                GeneratedAt = DateTime.UtcNow,
+                PluginVersion = typeof(SyncPlayManagerV2).Assembly.GetName().Version?.ToString(),
+                Counters = _counters.Snapshot(),
+            };
+
+            lock (_groupsLock)
+            {
+                foreach (var (_, group) in _groups)
+                {
+                    // Locking required as group is not thread-safe.
+                    lock (group)
+                    {
+                        report.Groups.Add(group.GetDiagnostics());
+                    }
+                }
+            }
+
+            return report;
+        }
+
+        /// <inheritdoc />
         public GroupInfoDto GetGroup(SessionInfo session, Guid groupId)
         {
             ArgumentNullException.ThrowIfNull(session);
@@ -432,9 +463,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 return;
             }
 
-            if (request is ReadyGroupRequest)
+            if (request is ReadyGroupRequest && CancelDeferredBuffering(session.Id))
             {
-                CancelDeferredBuffering(session.Id);
+                _counters.BufferingRecovered();
             }
 
             // This entry point is the wire's; the engine's own synthesized
@@ -687,14 +718,17 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             }
         }
 
-        private void CancelDeferredBuffering(string sessionId)
+        private bool CancelDeferredBuffering(string sessionId)
         {
             lock (_deferredBufferingLock)
             {
                 if (_deferredBuffering.Remove(sessionId))
                 {
                     _logger.LogDebug("Session {SessionId} recovered within the buffering grace period.", sessionId);
+                    return true;
                 }
+
+                return false;
             }
         }
 
@@ -770,6 +804,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     if (group.State.Equals(GroupStateType.Playing))
                     {
                         _logger.LogDebug("Session {SessionId} did not recover within the grace period, pausing group {GroupId}.", deferred.Session.Id, group.GroupId.ToString());
+                        _counters.BufferingApplied();
                         group.HandleRequest(deferred.Session, deferred.Request, CancellationToken.None);
                     }
                 }
@@ -791,8 +826,17 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                             continue;
                         }
 
-                        foreach (var (session, timeout) in group.GetStalledMembers(timings.StallTimeout, timings.LoadTimeout))
+                        foreach (var (session, timeout, load) in group.GetStalledMembers(timings.StallTimeout, timings.LoadTimeout))
                         {
+                            if (load)
+                            {
+                                _counters.LoadTimeout();
+                            }
+                            else
+                            {
+                                _counters.StallTimeout();
+                            }
+
                             // This is the moment the group gives up on a member,
                             // and until now giving up meant abandoning it: the
                             // group played on and the member was left wherever it
@@ -860,6 +904,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 foreach (var session in expired)
                 {
                     _logger.LogInformation("Session {SessionId} did not reconnect within {Grace}, removing it from its group.", session.Id, DisconnectedGracePeriod);
+                    _counters.GraceExpiry();
                     LeaveGroup(session, new LeaveGroupRequest(), CancellationToken.None);
                 }
             }

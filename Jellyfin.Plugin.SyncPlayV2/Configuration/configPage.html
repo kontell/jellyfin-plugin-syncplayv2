@@ -13,6 +13,23 @@
                     <div class="fieldDescription" id="SyncPlayV2StatusDetail"></div>
                 </div>
 
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">Groups right now</h2>
+                    <div id="SyncPlayV2Groups"><p>Loading…</p></div>
+                    <div class="fieldDescription">Refreshed every 5 seconds while this page is open.</div>
+                </div>
+
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">Since the server started</h2>
+                    <div id="SyncPlayV2Counters"></div>
+                    <br />
+                    <button is="emby-button" type="button" id="SyncPlayV2CopyReport" class="raised">
+                        <span>Copy report for a bug report</span>
+                    </button>
+                    <div class="fieldDescription">Copies the settings, counters and groups as JSON with user names, device names, group names and titles removed, ready to paste into a GitHub issue.</div>
+                    <textarea id="SyncPlayV2ReportText" readonly="readonly" rows="10" style="display:none;width:100%;margin-top:.5em;font-family:monospace;"></textarea>
+                </div>
+
                 <form id="SyncPlayV2ConfigForm">
                     <div class="verticalSection">
                         <h2 class="sectionTitle">Joining</h2>
@@ -68,10 +85,212 @@
                 var numbers = ['LoadTimeoutSeconds', 'StallTimeoutSeconds', 'BufferingGraceSeconds', 'DisconnectGraceSeconds', 'PositionBeaconSeconds'];
                 var page = document.querySelector('#SyncPlayV2ConfigPage');
 
+                var lastStatus = null;
+                var lastReport = null;
+                var refreshTimer = null;
+
+                function el(tag, text, style) {
+                    var node = document.createElement(tag);
+                    if (text !== undefined && text !== null) {
+                        node.textContent = text;
+                    }
+
+                    if (style) {
+                        node.setAttribute('style', style);
+                    }
+
+                    return node;
+                }
+
+                function clock(value) {
+                    if (value === null || value === undefined) {
+                        return '';
+                    }
+
+                    var total = Math.round(value);
+                    var h = Math.floor(total / 3600);
+                    var m = Math.floor((total % 3600) / 60);
+                    var sec = total % 60;
+                    var mm = (h > 0 && m < 10 ? '0' : '') + m;
+                    return (h > 0 ? h + ':' : '') + mm + ':' + (sec < 10 ? '0' : '') + sec;
+                }
+
+                function nowText(m) {
+                    if (!m.IsConnected) {
+                        return 'disconnected ' + clock(m.DisconnectedSeconds);
+                    }
+
+                    if (!m.IsBuffering) {
+                        return 'ready';
+                    }
+
+                    return (m.BufferingForLoad ? 'loading ' : 'stalled ') + clock(m.BufferingSeconds);
+                }
+
+                function flagsText(m) {
+                    var flags = [];
+                    if (m.IgnoredByTimeout) {
+                        flags.push('given up on (timeout)');
+                    }
+
+                    if (m.Spectator) {
+                        flags.push('not following');
+                    } else if (m.IgnoreGroupWait && !m.IgnoredByTimeout) {
+                        flags.push('not waited for');
+                    }
+
+                    if (m.HotJoining) {
+                        flags.push('catching up');
+                    }
+
+                    if (m.CorrectionAttempts > 0) {
+                        flags.push(m.CorrectionAttempts + ' correction(s)');
+                    }
+
+                    return flags.join(', ');
+                }
+
+                function renderGroups(report) {
+                    var host = page.querySelector('#SyncPlayV2Groups');
+                    host.textContent = '';
+                    if (!report.Groups.length) {
+                        host.appendChild(el('p', 'No SyncPlay groups.'));
+                        return;
+                    }
+
+                    report.Groups.forEach(function (g) {
+                        host.appendChild(el('h3', g.GroupName + ' · ' + g.State + ' for ' + clock(g.StateSeconds), 'margin-bottom:.2em'));
+                        var item = g.ItemName
+                            ? g.ItemName + ' · ' + clock(g.PositionSeconds) + (g.RunTimeSeconds ? ' / ' + clock(g.RunTimeSeconds) : '')
+                            : 'Nothing queued';
+                        host.appendChild(el('div', item, 'opacity:.8;margin-bottom:.5em'));
+
+                        var table = el('table', null, 'width:100%;border-collapse:collapse;text-align:left;margin-bottom:1.2em');
+                        var head = el('tr');
+                        ['Member', 'Client', 'Protocol', 'Ping', 'Now', 'Flags'].forEach(function (h) {
+                            head.appendChild(el('th', h, 'padding:.2em .6em .2em 0;font-weight:600'));
+                        });
+                        table.appendChild(head);
+                        g.Members.forEach(function (m) {
+                            var row = el('tr');
+                            var client = (m.Client || '') + (m.DeviceName ? ' (' + m.DeviceName + ')' : '');
+                            [m.UserName, client, 'v' + m.ProtocolVersion, m.Ping + ' ms', nowText(m), flagsText(m)].forEach(function (v) {
+                                row.appendChild(el('td', v, 'padding:.2em .6em .2em 0;vertical-align:top'));
+                            });
+                            table.appendChild(row);
+                        });
+                        host.appendChild(table);
+                    });
+                }
+
+                function renderCounters(c) {
+                    var host = page.querySelector('#SyncPlayV2Counters');
+                    host.textContent = '';
+                    var rows = [
+                        ['Gave up waiting for a member that was loading', c.LoadTimeouts],
+                        ['Gave up waiting for a member that stalled', c.StallTimeouts],
+                        ['Rebuffers absorbed by the grace (nobody paused)', c.BufferingRecovered],
+                        ['Rebuffers that paused the group', c.BufferingApplied],
+                        ['Position corrections sent', c.Corrections],
+                        ['Hot joins (v2)', c.HotJoins],
+                        ['Private catch-ups (v2 rendezvous)', c.Rendezvous],
+                        ['Disconnections', c.Disconnects],
+                        ['Reconnected within the grace', c.Reconnects],
+                        ['Removed after the grace', c.GraceExpiries],
+                        ['Dead connections detected', c.ZombieSockets]
+                    ];
+                    var table = el('table', null, 'border-collapse:collapse');
+                    rows.forEach(function (r) {
+                        var row = el('tr');
+                        row.appendChild(el('td', r[0], 'padding:.15em 1.2em .15em 0'));
+                        row.appendChild(el('td', String(r[1]), 'text-align:right;font-variant-numeric:tabular-nums'));
+                        table.appendChild(row);
+                    });
+                    host.appendChild(table);
+                    host.appendChild(el('div', 'Counting since ' + new Date(c.Since).toLocaleString() + '.', 'opacity:.8;margin-top:.4em'));
+                }
+
+                function loadDiagnostics() {
+                    if (!page.isConnected) {
+                        clearInterval(refreshTimer);
+                        refreshTimer = null;
+                        return;
+                    }
+
+                    ApiClient.getJSON(ApiClient.getUrl('SyncPlay/V2/Diagnostics')).then(function (report) {
+                        lastReport = report;
+                        renderGroups(report);
+                        renderCounters(report.Counters);
+                    }).catch(function () {
+                        page.querySelector('#SyncPlayV2Groups').textContent = 'Diagnostics unavailable.';
+                    });
+                }
+
+                function anonymized() {
+                    var names = {};
+                    var next = 1;
+                    function alias(name) {
+                        if (!names[name]) {
+                            names[name] = 'member ' + next++;
+                        }
+
+                        return names[name];
+                    }
+
+                    return {
+                        GeneratedAt: lastReport.GeneratedAt,
+                        PluginVersion: lastReport.PluginVersion,
+                        EngineActive: lastStatus ? lastStatus.EngineActive : null,
+                        Timings: lastStatus ? lastStatus.Timings : null,
+                        Counters: lastReport.Counters,
+                        Groups: lastReport.Groups.map(function (g, i) {
+                            return {
+                                Group: 'group ' + (i + 1),
+                                State: g.State,
+                                StateSeconds: g.StateSeconds,
+                                StateVersion: g.StateVersion,
+                                HasItem: !!g.ItemName,
+                                PositionSeconds: g.PositionSeconds,
+                                RunTimeSeconds: g.RunTimeSeconds,
+                                QueueLength: g.QueueLength,
+                                Members: g.Members.map(function (m) {
+                                    var copy = Object.assign({}, m);
+                                    copy.UserName = alias(m.UserName);
+                                    delete copy.DeviceName;
+                                    return copy;
+                                })
+                            };
+                        })
+                    };
+                }
+
+                page.querySelector('#SyncPlayV2CopyReport').addEventListener('click', function () {
+                    if (!lastReport) {
+                        return;
+                    }
+
+                    var text = JSON.stringify(anonymized(), null, 2);
+                    var box = page.querySelector('#SyncPlayV2ReportText');
+                    function showBox() {
+                        box.value = text;
+                        box.style.display = 'block';
+                        box.select();
+                    }
+
+                    if (navigator.clipboard && window.isSecureContext) {
+                        navigator.clipboard.writeText(text).then(function () {
+                            Dashboard.alert('Report copied. User, device and group names and titles were removed.');
+                        }, showBox);
+                    } else {
+                        showBox();
+                    }
+                });
+
                 function loadStatus() {
                     var status = page.querySelector('#SyncPlayV2Status');
                     var detail = page.querySelector('#SyncPlayV2StatusDetail');
                     ApiClient.getJSON(ApiClient.getUrl('SyncPlay/V2/Status')).then(function (s) {
+                        lastStatus = s;
                         if (s.EngineActive) {
                             status.textContent = 'Active: SyncPlay v2 ' + (s.PluginVersion || '') + ' is serving SyncPlay.';
                         } else {
@@ -98,6 +317,15 @@
                         Dashboard.hideLoadingMsg();
                     });
                     loadStatus();
+                    loadDiagnostics();
+                    if (!refreshTimer) {
+                        refreshTimer = setInterval(loadDiagnostics, 5000);
+                    }
+                });
+
+                page.addEventListener('pagehide', function () {
+                    clearInterval(refreshTimer);
+                    refreshTimer = null;
                 });
 
                 page.querySelector('#SyncPlayV2ConfigForm').addEventListener('submit', function (e) {

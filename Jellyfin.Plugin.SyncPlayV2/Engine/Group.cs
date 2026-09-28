@@ -14,6 +14,7 @@ using Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates;
 using MediaBrowser.Controller.SyncPlay.Queue;
 using MediaBrowser.Controller.SyncPlay.Requests;
 using MediaBrowser.Model.SyncPlay;
+using Jellyfin.Plugin.SyncPlayV2.Diagnostics;
 using Jellyfin.Plugin.SyncPlayV2.Wire;
 using Microsoft.Extensions.Logging;
 
@@ -88,13 +89,17 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <param name="userManager">The user manager.</param>
         /// <param name="sessionManager">The session manager.</param>
         /// <param name="libraryManager">The library manager.</param>
+        /// <param name="sender">The wire sender.</param>
+        /// <param name="versions">The protocol version registry.</param>
+        /// <param name="counters">The engine counters; a private set when omitted.</param>
         public Group(
             ILoggerFactory loggerFactory,
             IUserManager userManager,
             ISessionManager sessionManager,
             ILibraryManager libraryManager,
             Sender sender,
-            ProtocolVersionRegistry versions)
+            ProtocolVersionRegistry versions,
+            EngineCounters counters = null)
         {
             _loggerFactory = loggerFactory;
             _userManager = userManager;
@@ -102,6 +107,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             _libraryManager = libraryManager;
             _sender = sender;
             _versions = versions;
+            _counters = counters ?? new EngineCounters();
             _logger = loggerFactory.CreateLogger<Group>();
 
             _state = new IdleGroupState(loggerFactory);
@@ -110,6 +116,15 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         private readonly Sender _sender;
 
         private readonly ProtocolVersionRegistry _versions;
+
+        /// <summary>
+        /// What the engine did, for the diagnostics page. Feature divergence
+        /// (VENDORED.md): counted where the engine already logs the event.
+        /// </summary>
+        private readonly EngineCounters _counters;
+
+        /// <summary>When the group entered its current state, for diagnostics.</summary>
+        private DateTime _stateSince = DateTime.UtcNow;
 
         /// <summary>
         /// Gets the default ping value used for sessions.
@@ -531,6 +546,22 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <inheritdoc />
         public void BeginHotJoin(SessionInfo session, CancellationToken cancellationToken)
         {
+            if (_participants.ContainsKey(session.Id))
+            {
+                _counters.HotJoin();
+            }
+
+            StartCatchUp(session, cancellationToken);
+        }
+
+        /// <summary>
+        /// The hot-join mechanics, shared by a hot join and a rendezvous so each
+        /// can be counted as what it is.
+        /// </summary>
+        /// <param name="session">The member catching up.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        private void StartCatchUp(SessionInfo session, CancellationToken cancellationToken)
+        {
             if (!_participants.TryGetValue(session.Id, out GroupMember member))
             {
                 return;
@@ -592,7 +623,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             // scheduled Unpause. Nothing here is rendezvous-specific, which is
             // the point — a member that cannot catch up by seeking is in
             // exactly the position of one that has just walked in.
-            BeginHotJoin(session, cancellationToken);
+            _counters.Rendezvous();
+            StartCatchUp(session, cancellationToken);
         }
 
         /// <inheritdoc />
@@ -812,6 +844,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         {
             if (_participants.TryGetValue(session.Id, out GroupMember member))
             {
+                if (member.IsConnected)
+                {
+                    _counters.Disconnect();
+                }
+
                 member.IsConnected = false;
                 member.DisconnectedSince = DateTime.UtcNow;
                 // Flag like a group-wait timeout so that the member is automatically
@@ -836,6 +873,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 if (!member.IsConnected)
                 {
                     member.IsConnected = true;
+                    _counters.Reconnect();
                     BumpStateVersion();
                 }
             }
@@ -860,6 +898,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 // messages dropped while it had no open socket.
                 ResyncSession(session, cancellationToken);
                 return;
+            }
+
+            if (!member.IsConnected)
+            {
+                _counters.Reconnect();
             }
 
             member.Session = session;
@@ -926,21 +969,21 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// </summary>
         /// <param name="stallTimeout">The timeout for a member's own stall.</param>
         /// <param name="loadTimeout">The timeout for a load the group asked for.</param>
-        /// <returns>Each stalled session with the timeout it outlived.</returns>
-        public IReadOnlyList<(SessionInfo Session, TimeSpan Timeout)> GetStalledMembers(TimeSpan stallTimeout, TimeSpan loadTimeout)
+        /// <returns>Each stalled session with the timeout it outlived, and whether it was loading.</returns>
+        public IReadOnlyList<(SessionInfo Session, TimeSpan Timeout, bool Load)> GetStalledMembers(TimeSpan stallTimeout, TimeSpan loadTimeout)
         {
-            List<(SessionInfo, TimeSpan)> stalled = null;
+            List<(SessionInfo, TimeSpan, bool)> stalled = null;
             var now = DateTime.UtcNow;
             foreach (var member in _participants.Values)
             {
                 var timeout = member.BufferingForLoad ? loadTimeout : stallTimeout;
                 if (member.IsBuffering && !member.IgnoreGroupWait && now - member.BufferingSince > timeout)
                 {
-                    (stalled ??= new List<(SessionInfo, TimeSpan)>()).Add((member.Session, timeout));
+                    (stalled ??= new List<(SessionInfo, TimeSpan, bool)>()).Add((member.Session, timeout, member.BufferingForLoad));
                 }
             }
 
-            return stalled ?? (IReadOnlyList<(SessionInfo, TimeSpan)>)Array.Empty<(SessionInfo, TimeSpan)>();
+            return stalled ?? (IReadOnlyList<(SessionInfo, TimeSpan, bool)>)Array.Empty<(SessionInfo, TimeSpan, bool)>();
         }
 
         /// <summary>
@@ -1004,6 +1047,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         public void SetState(IGroupState state)
         {
             _logger.LogInformation("Group {GroupId} switching from {FromStateType} to {ToStateType}.", GroupId.ToString(), _state.Type, state.Type);
+            if (!state.Type.Equals(_state.Type))
+            {
+                _stateSince = DateTime.UtcNow;
+            }
+
             this._state = state;
             BumpStateVersion();
 
@@ -1186,6 +1234,67 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         public bool IsIgnoredByTimeout(string sessionId)
         {
             return _participants.TryGetValue(sessionId, out GroupMember member) && member.IgnoredByTimeout;
+        }
+
+        /// <inheritdoc />
+        public void RecordCorrection(SessionInfo session)
+        {
+            _counters.Correction();
+        }
+
+        /// <summary>
+        /// The group as the diagnostics page shows it: state, position, and for
+        /// every member the flags that decide how the group treats it.
+        /// Feature divergence (VENDORED.md): read-only, plugin-owned DTOs.
+        /// </summary>
+        /// <returns>The group's diagnostics.</returns>
+        public GroupDiagnostics GetDiagnostics()
+        {
+            var now = DateTime.UtcNow;
+            var positionTicks = PositionTicks;
+            if (_state.Type.Equals(GroupStateType.Playing))
+            {
+                positionTicks += Math.Max((now - LastActivity).Ticks, 0);
+            }
+
+            var playingItemId = PlayQueue.IsItemPlaying() ? PlayQueue.GetPlayingItemId() : Guid.Empty;
+            string itemName = null;
+            if (!playingItemId.Equals(Guid.Empty))
+            {
+                itemName = Content.Get(playingItemId)?.Name ?? _libraryManager.GetItemById(playingItemId)?.Name;
+            }
+
+            return new GroupDiagnostics
+            {
+                GroupId = GroupId,
+                GroupName = GroupName ?? string.Empty,
+                State = _state.Type,
+                StateSeconds = Math.Round((now - _stateSince).TotalSeconds, 1),
+                StateVersion = _stateVersion,
+                ItemName = itemName,
+                PositionSeconds = Math.Round(TimeSpan.FromTicks(positionTicks).TotalSeconds, 1),
+                RunTimeSeconds = Math.Round(TimeSpan.FromTicks(RunTimeTicks).TotalSeconds, 1),
+                QueueLength = PlayQueue.GetPlaylist().Count,
+                Members = _participants.Values.Select(member => new MemberDiagnostics
+                {
+                    UserName = member.UserName ?? string.Empty,
+                    Client = member.Session?.Client,
+                    DeviceName = member.Session?.DeviceName,
+                    ProtocolVersion = member.ProtocolVersion,
+                    ExternalContent = member.Session is not null && _versions.HasExternalContent(member.Session),
+                    Ping = member.Ping,
+                    IsConnected = member.IsConnected,
+                    DisconnectedSeconds = member.IsConnected ? null : Math.Round((now - member.DisconnectedSince).TotalSeconds, 1),
+                    IsBuffering = member.IsBuffering,
+                    BufferingSeconds = member.IsBuffering ? Math.Round((now - member.BufferingSince).TotalSeconds, 1) : null,
+                    BufferingForLoad = member.IsBuffering && member.BufferingForLoad,
+                    IgnoreGroupWait = member.IgnoreGroupWait,
+                    IgnoredByTimeout = member.IgnoredByTimeout,
+                    Spectator = member.IgnoreGroupWaitByRequest && member.IgnoreGroupWait,
+                    HotJoining = member.HotJoining,
+                    CorrectionAttempts = member.CorrectionAttempts,
+                }).ToList(),
+            };
         }
 
         /// <inheritdoc />

@@ -47,6 +47,12 @@ public interface IGroupStateContextV2 : IGroupStateContext
     bool IsSpectator(string sessionId);
 
     /// <summary>
+    /// Counts a position correction just sent to the member, for diagnostics.
+    /// </summary>
+    /// <param name="session">The member being corrected.</param>
+    void RecordCorrection(SessionInfo session);
+
+    /// <summary>
     /// The group waits again, from now, for a member it had given up on
     /// after a wait timeout: the member reported Buffer before it ever
     /// reported Ready, and a Waiting that does not wait for it has nobody
@@ -109,6 +115,13 @@ public interface ISyncPlayManagerV2 : ISyncPlayManager
     /// the shadowed GET /SyncPlay/List.
     /// </summary>
     List<Wire.WireGroupInfo> ListGroupsDetailed(SessionInfo session, bool requesterIsV2);
+
+    /// <summary>
+    /// Every group as the engine sees it, and the engine's counters since the
+    /// server started — for administrators only.
+    /// </summary>
+    /// <returns>The diagnostics report.</returns>
+    Diagnostics.DiagnosticsReport GetDiagnostics();
 
     /// <summary>
     /// A queue request whose entries include external content (plan G3.3):

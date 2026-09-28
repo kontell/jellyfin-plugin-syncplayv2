@@ -105,6 +105,20 @@ public class SyncPlayV2Controller : ControllerBase
     }
 
     /// <summary>
+    /// Every group as the engine sees it — state, position, and per member the
+    /// flags that decide how the group treats it — with the engine's counters
+    /// since the server started. For the dashboard page; user names, device
+    /// names and what is playing are included, so administrators only.
+    /// </summary>
+    /// <response code="200">Diagnostics returned.</response>
+    /// <returns>The diagnostics report.</returns>
+    [HttpGet("V2/Diagnostics")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [Authorize(Policy = Policies.RequiresElevation)]
+    public ActionResult<Diagnostics.DiagnosticsReport> GetDiagnostics()
+        => Ok(_syncPlayManager.GetDiagnostics());
+
+    /// <summary>
     /// Request a full state snapshot of the joined group, pushed over the
     /// session's WebSocket (v2 members get a StateSnapshot; v1 members the
     /// GroupJoined + PlayQueue + command triple).

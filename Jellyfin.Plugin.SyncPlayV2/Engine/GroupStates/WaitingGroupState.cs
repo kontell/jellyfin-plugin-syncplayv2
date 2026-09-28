@@ -520,6 +520,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     SendGroupStateUpdate(context, request, session, cancellationToken);
 
                     _logger.LogWarning("Session {SessionId} got lost in time, correcting.", session.Id);
+                    (context as IGroupStateContextV2)?.RecordCorrection(session);
                     return;
                 }
 
@@ -603,6 +604,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     SendGroupStateUpdate(context, request, session, cancellationToken);
 
                     _logger.LogWarning("Session {SessionId} is seeking to wrong position, correcting.", session.Id);
+                    (context as IGroupStateContextV2)?.RecordCorrection(session);
                     return;
                 }
 

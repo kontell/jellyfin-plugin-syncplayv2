@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net.WebSockets;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.SyncPlayV2.Diagnostics;
 using MediaBrowser.Controller.Net;
 using MediaBrowser.Controller.Session;
 using Microsoft.AspNetCore.Http;
@@ -31,11 +32,13 @@ public class SocketLiveness : IWebSocketListener, IDisposable
     private readonly ISessionManager _sessionManager;
     private readonly SyncPlayManagerV2 _engine;
     private readonly ILogger<SocketLiveness> _logger;
+    private readonly EngineCounters _counters;
     private readonly ConcurrentDictionary<IWebSocketConnection, Entry> _sockets = new();
     private readonly Timer _timer;
 
-    public SocketLiveness(ISessionManager sessionManager, SyncPlayManagerV2 engine, ILogger<SocketLiveness> logger)
+    public SocketLiveness(ISessionManager sessionManager, SyncPlayManagerV2 engine, ILogger<SocketLiveness> logger, EngineCounters counters)
     {
+        _counters = counters;
         _sessionManager = sessionManager;
         _engine = engine;
         _logger = logger;
@@ -148,6 +151,7 @@ public class SocketLiveness : IWebSocketListener, IDisposable
         if (dead)
         {
             _logger.LogInformation("Device {DeviceId} stopped keep-aliving (socket not aborted by core); marking session {SessionId} disconnected for SyncPlay.", deviceId, session.Id);
+            _counters.ZombieSocket();
             _engine.MarkSessionDisconnected(session);
         }
         else
