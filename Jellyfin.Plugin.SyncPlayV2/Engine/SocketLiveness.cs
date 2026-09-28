@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net.WebSockets;
 using System.Threading;
@@ -47,11 +48,14 @@ public class SocketLiveness : IWebSocketListener, IDisposable
 
     private sealed class Entry
     {
-        public Entry(string deviceId)
+        public Entry(string? client, string deviceId)
         {
+            Client = client;
             DeviceId = deviceId;
             ConnectedAt = DateTime.UtcNow;
         }
+
+        public string? Client { get; }
 
         public string DeviceId { get; }
 
@@ -69,7 +73,7 @@ public class SocketLiveness : IWebSocketListener, IDisposable
         var deviceId = connection.AuthorizationInfo?.DeviceId;
         if (!string.IsNullOrEmpty(deviceId))
         {
-            _sockets[connection] = new Entry(deviceId);
+            _sockets[connection] = new Entry(connection.AuthorizationInfo?.Client, deviceId);
             connection.Closed += (_, _) => _sockets.TryRemove(connection, out _);
         }
 
@@ -112,24 +116,26 @@ public class SocketLiveness : IWebSocketListener, IDisposable
 
                 if (stale)
                 {
-                    // Only presume the DEVICE dead when it has no other live socket
+                    // Only presume the CLIENT dead when it has no other live socket
                     // (a reconnect opens a fresh socket while the zombie lingers).
+                    // Another app on the same device is not a sibling: it is a
+                    // different session, and alive or not says nothing of this one.
                     var hasLiveSibling = _sockets.Any(kv =>
                         !ReferenceEquals(kv.Key, connection)
-                        && string.Equals(kv.Value.DeviceId, entry.DeviceId, StringComparison.OrdinalIgnoreCase)
+                        && SameIdentity(kv.Value, entry)
                         && !IsStale(kv.Key, kv.Value));
 
                     entry.ReportedDead = true;
                     if (!hasLiveSibling)
                     {
-                        Notify(entry.DeviceId, dead: true);
+                        Notify(entry, dead: true);
                     }
                 }
                 else
                 {
                     // Keep-alives resumed on a socket previously presumed dead.
                     entry.ReportedDead = false;
-                    Notify(entry.DeviceId, dead: false);
+                    Notify(entry, dead: false);
                 }
             }
         }
@@ -139,16 +145,31 @@ public class SocketLiveness : IWebSocketListener, IDisposable
         }
     }
 
-    private void Notify(string deviceId, bool dead)
-    {
-        var session = _sessionManager.Sessions.FirstOrDefault(
-            s => string.Equals(s.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase));
-        if (session is null)
-        {
-            return;
-        }
+    private static bool SameIdentity(Entry a, Entry b)
+        => string.Equals(a.DeviceId, b.DeviceId, StringComparison.OrdinalIgnoreCase)
+            && (a.Client is null || b.Client is null || string.Equals(a.Client, b.Client, StringComparison.OrdinalIgnoreCase));
 
-        if (dead)
+    /// <summary>
+    /// The sessions a socket belongs to: same device id and same client, the
+    /// identity a Jellyfin session is keyed by. The device id alone is not
+    /// unique — two apps on one device each have a session under it — and
+    /// taking the first match could disconnect the wrong one, or leave the
+    /// dead one attached. A socket that did not say which client it is
+    /// matches every session of its device, as before.
+    /// </summary>
+    /// <param name="sessions">The server's sessions.</param>
+    /// <param name="client">The socket's client, if it declared one.</param>
+    /// <param name="deviceId">The socket's device id.</param>
+    /// <returns>The matching sessions.</returns>
+    public static IReadOnlyList<SessionInfo> SessionsOf(IEnumerable<SessionInfo> sessions, string? client, string deviceId)
+        => sessions
+            .Where(s => string.Equals(s.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase)
+                && (client is null || string.Equals(s.Client, client, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+    private void Notify(Entry entry, bool dead)
+    {
+        foreach (var session in SessionsOf(_sessionManager.Sessions, entry.Client, entry.DeviceId))
         {
             _logger.LogInformation("Device {DeviceId} stopped keep-aliving (socket not aborted by core); marking session {SessionId} disconnected for SyncPlay.", deviceId, session.Id);
             _counters.ZombieSocket();
