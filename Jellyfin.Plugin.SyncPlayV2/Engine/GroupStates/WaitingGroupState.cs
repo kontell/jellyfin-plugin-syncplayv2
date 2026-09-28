@@ -546,30 +546,14 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                         context.LastActivity = currentTime.AddTicks(delayTicks);
                         var command = context.NewSyncPlayCommand(SendCommandType.Unpause);
 
-                        // Fix divergence (VENDORED.md): a v1 recovering member gets
-                        // the Unpause too, even when it is already playing — it is
-                        // behind the group, so jellyfin-web's scheduleUnpause does
-                        // not seek it, and it is what ends the "schedule-play"
-                        // indicator. A v2 member that is already playing keeps
-                        // upstream's filter: a v2 client lines its player up on a
-                        // scheduled Unpause's PositionTicks when it arms it, which
-                        // would jump a playing member ahead of the group before
-                        // the resume. Measured against Kofin's schedule().
-                        var filter = SyncPlayBroadcastType.AllGroup;
-                        if (request.IsPlaying
-                            && context is IGroupStateContextV2 v2
-                            && v2.IsV2Member(session.Id))
-                        {
-                            filter = SyncPlayBroadcastType.AllExceptCurrentSession;
-                        }
-
-                        context.SendCommand(session, filter, command, cancellationToken);
+                        context.SendCommand(session, ResumeAudience(request, context, session, delayTicks), command, cancellationToken);
 
                         _logger.LogInformation("Session {SessionId} is recovering, group {GroupId} will resume in {Delay} seconds.", session.Id, context.GroupId.ToString(), TimeSpan.FromTicks(delayTicks).TotalSeconds);
                     }
                     else
                     {
                         // Client, that was buffering, resumed playback but did not update others in time.
+                        var memberDelayTicks = delayTicks;
                         delayTicks = context.GetHighestPing() * 2 * TimeSpan.TicksPerMillisecond;
                         // Fix divergence (VENDORED.md): DefaultPing is milliseconds;
                         // compared as ticks the 500 ms floor was 0.05 ms.
@@ -578,7 +562,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                         context.LastActivity = currentTime.AddTicks(delayTicks);
 
                         var command = context.NewSyncPlayCommand(SendCommandType.Unpause);
-                        context.SendCommand(session, SyncPlayBroadcastType.AllGroup, command, cancellationToken);
+                        context.SendCommand(session, ResumeAudience(request, context, session, memberDelayTicks), command, cancellationToken);
 
                         _logger.LogWarning("Session {SessionId} resumed playback, group {GroupId} has {Delay} seconds to recover.", session.Id, context.GroupId.ToString(), TimeSpan.FromTicks(delayTicks).TotalSeconds);
                     }
@@ -791,6 +775,26 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     context.SetState(pausedState);
                 }
             }
+        }
+
+        private static SyncPlayBroadcastType ResumeAudience(ReadyGroupRequest request, IGroupStateContext context, SessionInfo session, long memberDelayTicks)
+        {
+            // Fix divergence (VENDORED.md): a playing v1 member needs the
+            // scheduled Unpause to clear jellyfin-web's "schedule-play" icon.
+            // A playing v2 member must not get it: Kofin pre-aligns to the
+            // future PositionTicks as soon as it arms the command, even when
+            // the member is only slightly behind. A member ahead of the group
+            // still gets the command to align backward; paused members need
+            // it to start playback. Both recovery branches use this.
+            if (request.IsPlaying
+                && memberDelayTicks > 0
+                && context is IGroupStateContextV2 v2
+                && v2.IsV2Member(session.Id))
+            {
+                return SyncPlayBroadcastType.AllExceptCurrentSession;
+            }
+
+            return SyncPlayBroadcastType.AllGroup;
         }
     }
 }
