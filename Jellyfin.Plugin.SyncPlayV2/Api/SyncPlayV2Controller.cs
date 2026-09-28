@@ -97,7 +97,7 @@ public class SyncPlayV2Controller : ControllerBase
 
         return Ok(new
         {
-            ProtocolVersion = 2,
+            ProtocolVersion = ProtocolVersionRegistry.ServerVersion,
             PluginVersion = typeof(SyncPlayV2Controller).Assembly.GetName().Version?.ToString(),
             TimeSync = new { WebSocketPath = "/SyncPlay/TimeSync" },
             Capabilities = new[] { ProtocolVersionRegistry.ExternalContentCapability },
