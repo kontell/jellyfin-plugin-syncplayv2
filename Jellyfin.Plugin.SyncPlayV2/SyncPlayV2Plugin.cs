@@ -46,5 +46,5 @@ public class SyncPlayV2Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     /// <inheritdoc />
     public override string Description
-        => "SyncPlay protocol v2 (M0 spike build): versioned state, snapshots, position beacons and robust reconnects, served from a plugin.";
+        => "SyncPlay protocol v2: versioned state, snapshots, position beacons, adaptive tolerances, bounded group-waits and robust reconnects — serving stock v1 clients and v2 clients from one group registry, replacing the built-in SyncPlay while installed.";
 }
