@@ -549,7 +549,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     {
                         // Client, that was buffering, resumed playback but did not update others in time.
                         delayTicks = context.GetHighestPing() * 2 * TimeSpan.TicksPerMillisecond;
-                        delayTicks = Math.Max(delayTicks, context.DefaultPing);
+                        // Fix divergence (VENDORED.md): DefaultPing is milliseconds;
+                        // compared as ticks the 500 ms floor was 0.05 ms.
+                        delayTicks = Math.Max(delayTicks, context.DefaultPing * TimeSpan.TicksPerMillisecond);
 
                         context.LastActivity = currentTime.AddTicks(delayTicks);
 
