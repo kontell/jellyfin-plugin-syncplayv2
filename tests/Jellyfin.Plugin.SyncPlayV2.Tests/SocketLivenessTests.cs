@@ -111,16 +111,25 @@ public class SocketLivenessTests
     {
         // With no client to go by, "every session of the device" is the only
         // match, and that is how the wrong app gets disconnected.
+        // A watched socket subscribes to Closed; these must not be watched
+        // at all, not merely match no session.
         var liveness = Liveness();
         Session("kodi", Kodi, "device-1", Alice);
         Session("web", Web, "device-1", Alice);
-        Connect(liveness, null, "device-1", Alice);
-        Connect(liveness, string.Empty, "device-1", Alice);
+        var sockets = new[]
+        {
+            Connect(liveness, null, "device-1", Alice),
+            Connect(liveness, string.Empty, "device-1", Alice),
+            Connect(liveness, Web, null, Alice),
+            Connect(liveness, Web, string.Empty, Alice),
+        };
 
         Advance(TimeSpan.FromSeconds(61));
         liveness.Sweep();
 
         Assert.Empty(_disconnected);
+        Assert.All(sockets, socket => Assert.Equal(0, socket.ClosedSubscriptions));
+        Assert.Equal(1, Connect(liveness, Web, "device-1", Alice).ClosedSubscriptions);
     }
 
     [Fact]
@@ -144,9 +153,9 @@ public class SocketLivenessTests
     private void Session(string id, string client, string deviceId, Guid userId)
         => _sessions.Add(new SessionInfo(null, null) { Id = id, Client = client, DeviceId = deviceId, UserId = userId });
 
-    private FakeSocket Connect(SocketLiveness liveness, string? client, string deviceId, Guid userId)
+    private FakeSocket Connect(SocketLiveness liveness, string? client, string? deviceId, Guid userId)
     {
-        var auth = new AuthorizationInfo { Client = client!, DeviceId = deviceId };
+        var auth = new AuthorizationInfo { Client = client!, DeviceId = deviceId! };
         UserProperty.SetValue(auth, userId == Alice ? AliceUser : BobUser);
         var socket = FakeSocket.Create(auth, _now);
         liveness.ProcessWebSocketConnectedAsync((IWebSocketConnection)(object)socket, null!).GetAwaiter().GetResult();
@@ -192,6 +201,9 @@ public class FakeSocket : DispatchProxy
     private AuthorizationInfo _auth = new();
     private DateTime _lastActivity;
 
+    /// <summary>Gets how many handlers subscribed to Closed: 1 when watched.</summary>
+    public int ClosedSubscriptions { get; private set; }
+
     public static FakeSocket Create(AuthorizationInfo auth, DateTime connectedAt)
     {
         var proxy = (FakeSocket)(object)Create<IWebSocketConnection, FakeSocket>();
@@ -202,6 +214,12 @@ public class FakeSocket : DispatchProxy
 
     public void KeepAlive(DateTime at) => _lastActivity = at;
 
+    private object? Subscribed()
+    {
+        ClosedSubscriptions++;
+        return null;
+    }
+
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         => targetMethod!.Name switch
         {
@@ -209,7 +227,8 @@ public class FakeSocket : DispatchProxy
             "get_State" => WebSocketState.Open,
             "get_LastActivityDate" => _lastActivity,
             "get_LastKeepAliveDate" => _lastActivity,
-            "add_Closed" or "remove_Closed" => null,
+            "add_Closed" => Subscribed(),
+            "remove_Closed" => null,
             _ => throw new NotSupportedException(targetMethod.Name),
         };
 }
