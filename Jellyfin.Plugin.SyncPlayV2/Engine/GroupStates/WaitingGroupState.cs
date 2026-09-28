@@ -535,10 +535,22 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                         // Client that was buffering is recovering, notifying others to resume.
                         context.LastActivity = currentTime.AddTicks(delayTicks);
                         var command = context.NewSyncPlayCommand(SendCommandType.Unpause);
-                        var filter = SyncPlayBroadcastType.AllExceptCurrentSession;
-                        if (!request.IsPlaying)
+
+                        // Fix divergence (VENDORED.md): a v1 recovering member gets
+                        // the Unpause too, even when it is already playing — it is
+                        // behind the group, so jellyfin-web's scheduleUnpause does
+                        // not seek it, and it is what ends the "schedule-play"
+                        // indicator. A v2 member that is already playing keeps
+                        // upstream's filter: a v2 client lines its player up on a
+                        // scheduled Unpause's PositionTicks when it arms it, which
+                        // would jump a playing member ahead of the group before
+                        // the resume. Measured against Kofin's schedule().
+                        var filter = SyncPlayBroadcastType.AllGroup;
+                        if (request.IsPlaying
+                            && context is IGroupStateContextV2 v2
+                            && v2.IsV2Member(session.Id))
                         {
-                            filter = SyncPlayBroadcastType.AllGroup;
+                            filter = SyncPlayBroadcastType.AllExceptCurrentSession;
                         }
 
                         context.SendCommand(session, filter, command, cancellationToken);
