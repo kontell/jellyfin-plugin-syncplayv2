@@ -169,16 +169,26 @@ public class SocketLiveness : IWebSocketListener, IDisposable
 
     private void Notify(Entry entry, bool dead)
     {
-        foreach (var session in SessionsOf(_sessionManager.Sessions, entry.Client, entry.DeviceId))
+        var sessions = SessionsOf(_sessionManager.Sessions, entry.Client, entry.DeviceId);
+        if (dead && sessions.Count > 0)
         {
-            _logger.LogInformation("Device {DeviceId} stopped keep-aliving (socket not aborted by core); marking session {SessionId} disconnected for SyncPlay.", deviceId, session.Id);
+            // Count the dead socket once even when an unnamed client matches
+            // more than one session on its device.
             _counters.ZombieSocket();
-            _engine.MarkSessionDisconnected(session);
         }
-        else
+
+        foreach (var session in sessions)
         {
-            _logger.LogInformation("Device {DeviceId} resumed keep-aliving; re-attaching session {SessionId}.", deviceId, session.Id);
-            _engine.ReattachSession(session);
+            if (dead)
+            {
+                _logger.LogInformation("Device {DeviceId} ({Client}) stopped keep-aliving (socket not aborted by core); marking session {SessionId} disconnected for SyncPlay.", entry.DeviceId, entry.Client, session.Id);
+                _engine.MarkSessionDisconnected(session);
+            }
+            else
+            {
+                _logger.LogInformation("Device {DeviceId} ({Client}) resumed keep-aliving; re-attaching session {SessionId}.", entry.DeviceId, entry.Client, session.Id);
+                _engine.ReattachSession(session);
+            }
         }
     }
 
