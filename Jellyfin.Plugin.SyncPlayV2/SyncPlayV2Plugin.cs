@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using Jellyfin.Plugin.SyncPlayV2.Configuration;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
+using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
 
 namespace Jellyfin.Plugin.SyncPlayV2;
@@ -13,7 +15,7 @@ namespace Jellyfin.Plugin.SyncPlayV2;
 /// ISyncPlayManager while installed; disable the plugin to restore stock
 /// SyncPlay.
 /// </summary>
-public class SyncPlayV2Plugin : BasePlugin<PluginConfiguration>
+public class SyncPlayV2Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
     public SyncPlayV2Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer)
         : base(applicationPaths, xmlSerializer)
@@ -27,6 +29,16 @@ public class SyncPlayV2Plugin : BasePlugin<PluginConfiguration>
     public static SyncPlayV2Plugin? Instance { get; private set; }
 
     /// <inheritdoc />
+    public IEnumerable<PluginPageInfo> GetPages()
+    {
+        yield return new PluginPageInfo
+        {
+            Name = "SyncPlayV2",
+            EmbeddedResourcePath = GetType().Namespace + ".Configuration.configPage.html",
+        };
+    }
+
+    /// <inheritdoc />
     public override Guid Id => new Guid("181f9934-bf71-4941-974e-a5f2cdcccc4e");
 
     /// <inheritdoc />
@@ -34,5 +46,5 @@ public class SyncPlayV2Plugin : BasePlugin<PluginConfiguration>
 
     /// <inheritdoc />
     public override string Description
-        => "SyncPlay protocol v2 (M0 spike build): versioned state, snapshots, position beacons and robust reconnects, served from a plugin.";
+        => "SyncPlay protocol v2: versioned state, snapshots, position beacons, adaptive tolerances, bounded group-waits and robust reconnects — serving stock v1 clients and v2 clients from one group registry, replacing the built-in SyncPlay while installed.";
 }

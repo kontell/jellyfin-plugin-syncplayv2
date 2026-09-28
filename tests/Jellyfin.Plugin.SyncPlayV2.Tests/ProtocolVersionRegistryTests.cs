@@ -47,6 +47,31 @@ public class ProtocolVersionRegistryTests
     }
 
     [Fact]
+    public void A_client_asking_for_more_than_the_server_speaks_negotiates_the_server_version()
+    {
+        // Today every check is ">= 2", so a stored 3 behaves like a 2 — until
+        // the day a v3 feature is gated on ">= 3" and a v3 client talking to
+        // this v2 server is sent messages the server cannot produce correctly.
+        var registry = new ProtocolVersionRegistry();
+
+        registry.RegisterHello("kofin", "device-1", 3, externalContent: false);
+
+        Assert.Equal(ProtocolVersionRegistry.ServerVersion, registry.Resolve("kofin", "device-1"));
+    }
+
+    [Fact]
+    public void A_version_below_one_is_a_v1_client()
+    {
+        var registry = new ProtocolVersionRegistry();
+
+        registry.Register("kofin", "device-1", 0);
+        registry.Register("web", "device-2", -7);
+
+        Assert.Equal(1, registry.Resolve("kofin", "device-1"));
+        Assert.Equal(1, registry.Resolve("web", "device-2"));
+    }
+
+    [Fact]
     public void Missing_device_id_is_never_registered()
     {
         var registry = new ProtocolVersionRegistry();

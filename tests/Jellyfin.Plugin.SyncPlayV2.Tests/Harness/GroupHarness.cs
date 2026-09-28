@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.SyncPlayV2.Diagnostics;
 using Jellyfin.Plugin.SyncPlayV2.Engine;
 using Jellyfin.Plugin.SyncPlayV2.Wire;
 using MediaBrowser.Controller.Library;
@@ -49,8 +50,11 @@ internal sealed class GroupHarness
             _sessionManager,
             NullService<ILibraryManager>.Create(),
             new Sender(NullLogger<Sender>.Instance),
-            _versions);
+            _versions,
+            Counters);
     }
+
+    public EngineCounters Counters { get; } = new();
 
     public Group Group { get; }
 
@@ -162,6 +166,12 @@ internal sealed class Member
     public void Seek(long positionTicks) => Send(new SeekGroupRequest(positionTicks));
 
     public void Ping(long milliseconds) => Send(new PingGroupRequest(milliseconds));
+
+    public void Pause() => Send(new PauseGroupRequest());
+
+    public void Unpause() => Send(new UnpauseGroupRequest());
+
+    public void Stop() => Send(new StopGroupRequest());
 
     /// <summary>
     /// The wire's SetIgnoreWait, attributed to the member the way

@@ -11,6 +11,8 @@ using MediaBrowser.Controller.SyncPlay;
 using MediaBrowser.Controller.SyncPlay.PlaybackRequests;
 using MediaBrowser.Controller.SyncPlay.Requests;
 using MediaBrowser.Model.SyncPlay;
+using Jellyfin.Plugin.SyncPlayV2.Configuration;
+using Jellyfin.Plugin.SyncPlayV2.Diagnostics;
 using Jellyfin.Plugin.SyncPlayV2.Wire;
 using Microsoft.Extensions.Logging;
 
@@ -72,31 +74,30 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// </remarks>
         private readonly Lock _groupsLock = new();
 
-        /// <summary>
-        /// The maximum time a single member can keep its group in the waiting state
-        /// before the group stops waiting on it. The member is waited on again as soon
-        /// as it reports again.
-        /// </summary>
-        private static readonly TimeSpan GroupWaitTimeout = TimeSpan.FromSeconds(10);
+        // Feature divergence (VENDORED.md): the timings below were constants;
+        // they are read from the plugin configuration on every use, so a saved
+        // change applies from the next sweep. The maximum time a member can keep
+        // its group waiting is two of them now: StallTimeout for its own stall,
+        // LoadTimeout for a load the group asked for (see GetStalledMembers).
 
         /// <summary>
-        /// How long a buffering report is held back while the group keeps playing,
+        /// Gets how long a buffering report is held back while the group keeps playing,
         /// giving the member a chance to recover before the whole group is paused.
         /// </summary>
-        private static readonly TimeSpan BufferingGracePeriod = TimeSpan.FromSeconds(2);
+        private static TimeSpan BufferingGracePeriod => EngineTimings.Current.BufferingGrace;
 
         /// <summary>
-        /// How long a member whose session ended is kept in its group. The group does
+        /// Gets how long a member whose session ended is kept in its group. The group does
         /// not wait on disconnected members; a member that reconnects within the window
         /// resumes with a state snapshot, one that does not is removed.
         /// </summary>
-        private static readonly TimeSpan DisconnectedGracePeriod = TimeSpan.FromSeconds(90);
+        private static TimeSpan DisconnectedGracePeriod => EngineTimings.Current.DisconnectGrace;
 
         /// <summary>
-        /// How often position beacons are broadcast to protocol version 2 members
+        /// Gets how often position beacons are broadcast to protocol version 2 members
         /// while a group is playing.
         /// </summary>
-        private static readonly TimeSpan PositionBeaconInterval = TimeSpan.FromSeconds(5);
+        private static TimeSpan PositionBeaconInterval => EngineTimings.Current.PositionBeaconInterval;
 
         /// <summary>
         /// The buffering requests currently held back, by session identifier.
@@ -129,6 +130,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
         private readonly ProtocolVersionRegistry _versions;
 
+        private readonly EngineCounters _counters;
+
         /// <summary>
         /// Initializes a new instance of the <see cref="SyncPlayManager" /> class.
         /// </summary>
@@ -142,8 +145,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             ISessionManager sessionManager,
             ILibraryManager libraryManager,
             Sender sender,
-            ProtocolVersionRegistry versions)
+            ProtocolVersionRegistry versions,
+            EngineCounters counters)
         {
+            _counters = counters;
             _loggerFactory = loggerFactory;
             _userManager = userManager;
             _sessionManager = sessionManager;
@@ -186,7 +191,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     LeaveGroup(session, leaveGroupRequest, cancellationToken);
                 }
 
-                var group = new Group(_loggerFactory, _userManager, _sessionManager, _libraryManager, _sender, _versions);
+                var group = new Group(_loggerFactory, _userManager, _sessionManager, _libraryManager, _sender, _versions, _counters);
                 _groups[group.GroupId] = group;
 
                 if (!_sessionToGroupMap.TryAdd(session.Id, group))
@@ -387,6 +392,32 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         }
 
         /// <inheritdoc />
+        public DiagnosticsReport GetDiagnostics()
+        {
+            // Feature divergence (VENDORED.md): the diagnostics page.
+            var report = new DiagnosticsReport
+            {
+                GeneratedAt = DateTime.UtcNow,
+                PluginVersion = typeof(SyncPlayManagerV2).Assembly.GetName().Version?.ToString(),
+                Counters = _counters.Snapshot(),
+            };
+
+            lock (_groupsLock)
+            {
+                foreach (var (_, group) in _groups)
+                {
+                    // Locking required as group is not thread-safe.
+                    lock (group)
+                    {
+                        report.Groups.Add(group.GetDiagnostics());
+                    }
+                }
+            }
+
+            return report;
+        }
+
+        /// <inheritdoc />
         public GroupInfoDto GetGroup(SessionInfo session, Guid groupId)
         {
             ArgumentNullException.ThrowIfNull(session);
@@ -432,9 +463,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 return;
             }
 
-            if (request is ReadyGroupRequest)
+            if (request is ReadyGroupRequest && CancelDeferredBuffering(session.Id))
             {
-                CancelDeferredBuffering(session.Id);
+                _counters.BufferingRecovered();
             }
 
             // This entry point is the wire's; the engine's own synthesized
@@ -648,7 +679,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
         private bool TryDeferBuffering(SessionInfo session, BufferGroupRequest request)
         {
-            if (BufferingGracePeriod <= TimeSpan.Zero)
+            var grace = BufferingGracePeriod;
+            if (grace <= TimeSpan.Zero)
             {
                 return false;
             }
@@ -677,8 +709,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     // Keep the first report; a member that is still buffering does not get more grace.
                     if (!_deferredBuffering.ContainsKey(session.Id))
                     {
-                        _deferredBuffering[session.Id] = new DeferredBuffering(session, request, group.GroupId, DateTime.UtcNow.Add(BufferingGracePeriod));
-                        _logger.LogDebug("Session {SessionId} started buffering in group {GroupId}, holding back the report for {Grace}.", session.Id, group.GroupId.ToString(), BufferingGracePeriod);
+                        _deferredBuffering[session.Id] = new DeferredBuffering(session, request, group.GroupId, DateTime.UtcNow.Add(grace));
+                        _logger.LogDebug("Session {SessionId} started buffering in group {GroupId}, holding back the report for {Grace}.", session.Id, group.GroupId.ToString(), grace);
                     }
                 }
 
@@ -686,14 +718,17 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             }
         }
 
-        private void CancelDeferredBuffering(string sessionId)
+        private bool CancelDeferredBuffering(string sessionId)
         {
             lock (_deferredBufferingLock)
             {
                 if (_deferredBuffering.Remove(sessionId))
                 {
                     _logger.LogDebug("Session {SessionId} recovered within the buffering grace period.", sessionId);
+                    return true;
                 }
+
+                return false;
             }
         }
 
@@ -769,6 +804,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     if (group.State.Equals(GroupStateType.Playing))
                     {
                         _logger.LogDebug("Session {SessionId} did not recover within the grace period, pausing group {GroupId}.", deferred.Session.Id, group.GroupId.ToString());
+                        _counters.BufferingApplied();
                         group.HandleRequest(deferred.Session, deferred.Request, CancellationToken.None);
                     }
                 }
@@ -777,6 +813,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
         private void IgnoreStalledMembers()
         {
+            var timings = EngineTimings.Current;
             lock (_groupsLock)
             {
                 foreach (var (_, group) in _groups)
@@ -789,8 +826,17 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                             continue;
                         }
 
-                        foreach (var session in group.GetStalledBufferingSessions(GroupWaitTimeout))
+                        foreach (var (session, timeout, load) in group.GetStalledMembers(timings.StallTimeout, timings.LoadTimeout))
                         {
+                            if (load)
+                            {
+                                _counters.LoadTimeout();
+                            }
+                            else
+                            {
+                                _counters.StallTimeout();
+                            }
+
                             // This is the moment the group gives up on a member,
                             // and until now giving up meant abandoning it: the
                             // group played on and the member was left wherever it
@@ -816,12 +862,12 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                             {
                                 group.RendezvousMember(
                                     session,
-                                    $"kept the group waiting for over {GroupWaitTimeout}",
+                                    $"kept the group waiting for over {timeout}",
                                     CancellationToken.None);
                             }
                             else
                             {
-                                _logger.LogWarning("Session {SessionId} kept group {GroupId} waiting for over {Timeout}, ignoring it until it reports again.", session.Id, group.GroupId.ToString(), GroupWaitTimeout);
+                                _logger.LogWarning("Session {SessionId} kept group {GroupId} waiting for over {Timeout}, ignoring it until it reports again.", session.Id, group.GroupId.ToString(), timeout);
 
                                 group.MarkIgnoredByTimeout(session);
                             }
@@ -858,6 +904,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 foreach (var session in expired)
                 {
                     _logger.LogInformation("Session {SessionId} did not reconnect within {Grace}, removing it from its group.", session.Id, DisconnectedGracePeriod);
+                    _counters.GraceExpiry();
                     LeaveGroup(session, new LeaveGroupRequest(), CancellationToken.None);
                 }
             }

@@ -39,6 +39,30 @@ public interface IGroupStateContextV2 : IGroupStateContext
     bool IsIgnoredByTimeout(string sessionId);
 
     /// <summary>
+    /// Whether the member asked not to be waited for (SetIgnoreWait) and
+    /// still does: its stalls are its own and never stop the group.
+    /// </summary>
+    /// <param name="sessionId">The session identifier.</param>
+    /// <returns><c>true</c> if the member is a spectator by its own choice.</returns>
+    bool IsSpectator(string sessionId);
+
+    /// <summary>
+    /// Counts a position correction just sent to the member, for diagnostics.
+    /// </summary>
+    /// <param name="session">The member being corrected.</param>
+    void RecordCorrection(SessionInfo session);
+
+    /// <summary>
+    /// The group waits again, from now, for a member it had given up on
+    /// after a wait timeout: the member reported Buffer before it ever
+    /// reported Ready, and a Waiting that does not wait for it has nobody
+    /// to end it. The member gets a fresh GroupWaitTimeout.
+    /// </summary>
+    /// <param name="session">The session that reported Buffer.</param>
+    /// <returns><c>true</c> if the member had been given up on and is waited for again.</returns>
+    bool RestartWaitFor(SessionInfo session);
+
+    /// <summary>
     /// Admits a v2 member into a Playing group without pausing anyone: the
     /// member is flagged as not-waited-on and pushed a state snapshot to
     /// rendezvous from.
@@ -91,6 +115,13 @@ public interface ISyncPlayManagerV2 : ISyncPlayManager
     /// the shadowed GET /SyncPlay/List.
     /// </summary>
     List<Wire.WireGroupInfo> ListGroupsDetailed(SessionInfo session, bool requesterIsV2);
+
+    /// <summary>
+    /// Every group as the engine sees it, and the engine's counters since the
+    /// server started — for administrators only.
+    /// </summary>
+    /// <returns>The diagnostics report.</returns>
+    Diagnostics.DiagnosticsReport GetDiagnostics();
 
     /// <summary>
     /// A queue request whose entries include external content (plan G3.3):

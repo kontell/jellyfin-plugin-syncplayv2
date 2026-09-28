@@ -354,6 +354,15 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 return;
             }
 
+            // Fix divergence (VENDORED.md, #14): a member the group gave up on
+            // that stalls again before it ever reported ready is reporting again
+            // all the same. Without this the group waits for nobody: IsBuffering()
+            // and the wait-timeout sweep both skip the still-ignored member.
+            if (context is IGroupStateContextV2 restartContext && restartContext.RestartWaitFor(session))
+            {
+                _logger.LogInformation("Session {SessionId} buffered again in group {GroupId} after the group stopped waiting for it; the group waits for it again.", session.Id, context.GroupId.ToString());
+            }
+
             if (prevState.Equals(GroupStateType.Playing))
             {
                 // Resume playback when all ready.
@@ -511,6 +520,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     SendGroupStateUpdate(context, request, session, cancellationToken);
 
                     _logger.LogWarning("Session {SessionId} got lost in time, correcting.", session.Id);
+                    (context as IGroupStateContextV2)?.RecordCorrection(session);
                     return;
                 }
 
@@ -535,10 +545,22 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                         // Client that was buffering is recovering, notifying others to resume.
                         context.LastActivity = currentTime.AddTicks(delayTicks);
                         var command = context.NewSyncPlayCommand(SendCommandType.Unpause);
-                        var filter = SyncPlayBroadcastType.AllExceptCurrentSession;
-                        if (!request.IsPlaying)
+
+                        // Fix divergence (VENDORED.md): a v1 recovering member gets
+                        // the Unpause too, even when it is already playing — it is
+                        // behind the group, so jellyfin-web's scheduleUnpause does
+                        // not seek it, and it is what ends the "schedule-play"
+                        // indicator. A v2 member that is already playing keeps
+                        // upstream's filter: a v2 client lines its player up on a
+                        // scheduled Unpause's PositionTicks when it arms it, which
+                        // would jump a playing member ahead of the group before
+                        // the resume. Measured against Kofin's schedule().
+                        var filter = SyncPlayBroadcastType.AllGroup;
+                        if (request.IsPlaying
+                            && context is IGroupStateContextV2 v2
+                            && v2.IsV2Member(session.Id))
                         {
-                            filter = SyncPlayBroadcastType.AllGroup;
+                            filter = SyncPlayBroadcastType.AllExceptCurrentSession;
                         }
 
                         context.SendCommand(session, filter, command, cancellationToken);
@@ -582,6 +604,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     SendGroupStateUpdate(context, request, session, cancellationToken);
 
                     _logger.LogWarning("Session {SessionId} is seeking to wrong position, correcting.", session.Id);
+                    (context as IGroupStateContextV2)?.RecordCorrection(session);
                     return;
                 }
 

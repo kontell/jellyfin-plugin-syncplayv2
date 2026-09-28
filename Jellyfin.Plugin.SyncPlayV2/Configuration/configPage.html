@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SyncPlay v2</title>
+</head>
+<body>
+    <div id="SyncPlayV2ConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+        <div data-role="content">
+            <div class="content-primary">
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">Status</h2>
+                    <p id="SyncPlayV2Status">Checking…</p>
+                    <div class="fieldDescription" id="SyncPlayV2StatusDetail"></div>
+                </div>
+
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">Groups right now</h2>
+                    <div id="SyncPlayV2Groups"><p>Loading…</p></div>
+                    <div class="fieldDescription">Refreshed every 5 seconds while this page is open.</div>
+                </div>
+
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">Since the server started</h2>
+                    <div id="SyncPlayV2Counters"></div>
+                    <br />
+                    <button is="emby-button" type="button" id="SyncPlayV2CopyReport" class="raised">
+                        <span>Copy report for a bug report</span>
+                    </button>
+                    <div class="fieldDescription">Copies the settings, counters and groups as JSON with user names, device names, group names and titles removed, ready to paste into a GitHub issue.</div>
+                    <textarea id="SyncPlayV2ReportText" readonly="readonly" rows="10" style="display:none;width:100%;margin-top:.5em;font-family:monospace;"></textarea>
+                </div>
+
+                <form id="SyncPlayV2ConfigForm">
+                    <div class="verticalSection">
+                        <h2 class="sectionTitle">Joining</h2>
+                        <div class="checkboxContainer checkboxContainer-withDescription">
+                            <label>
+                                <input is="emby-checkbox" type="checkbox" id="HotJoin" />
+                                <span>Hot join</span>
+                            </label>
+                            <div class="fieldDescription checkboxFieldDescription">Members whose client speaks SyncPlay v2 join a playing group without pausing everyone else. Stock jellyfin-web is v1 and always uses the classic wait.</div>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h2 class="sectionTitle">Waiting for members</h2>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="LoadTimeoutSeconds" label="Load timeout (seconds)" min="3" max="300" step="1" />
+                            <div class="fieldDescription">How long the group waits for a member to load a new item, a restarted item or the group's item when joining, before playing on without it. Starting a transcode can take a while. 3–300, default 30.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="StallTimeoutSeconds" label="Stall timeout (seconds)" min="3" max="120" step="1" />
+                            <div class="fieldDescription">How long the group waits for a member that stalled on its own, or is catching up after a seek, before playing on without it. The member is waited for again as soon as it reports. 3–120, default 10.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="BufferingGraceSeconds" label="Buffering grace (seconds)" min="0" max="10" step="1" />
+                            <div class="fieldDescription">A rebuffer shorter than this does not pause anyone else. 0 pauses the group on every rebuffer. 0–10, default 2.</div>
+                        </div>
+                    </div>
+
+                    <div class="verticalSection">
+                        <h2 class="sectionTitle">Connections</h2>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="DisconnectGraceSeconds" label="Disconnect grace (seconds)" min="10" max="600" step="1" />
+                            <div class="fieldDescription">A member whose connection drops keeps its place this long and resumes where the group is if it comes back. 10–600, default 90.</div>
+                        </div>
+                        <div class="inputContainer">
+                            <input is="emby-input" type="number" id="PositionBeaconSeconds" label="Position beacon interval (seconds)" min="1" max="60" step="1" />
+                            <div class="fieldDescription">How often v2 clients are told the group's position while playing. 1–60, default 5.</div>
+                        </div>
+                    </div>
+
+                    <div class="fieldDescription">Changes apply to running groups from the next check, about a second after saving. No restart needed.</div>
+                    <br />
+                    <button is="emby-button" type="submit" class="raised button-submit block">
+                        <span>Save</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <script type="text/javascript">
+            (function () {
+                var pluginId = '181f9934-bf71-4941-974e-a5f2cdcccc4e';
+                var numbers = ['LoadTimeoutSeconds', 'StallTimeoutSeconds', 'BufferingGraceSeconds', 'DisconnectGraceSeconds', 'PositionBeaconSeconds'];
+                var page = document.querySelector('#SyncPlayV2ConfigPage');
+
+                var lastStatus = null;
+                var lastReport = null;
+                var refreshTimer = null;
+
+                function el(tag, text, style) {
+                    var node = document.createElement(tag);
+                    if (text !== undefined && text !== null) {
+                        node.textContent = text;
+                    }
+
+                    if (style) {
+                        node.setAttribute('style', style);
+                    }
+
+                    return node;
+                }
+
+                function clock(value) {
+                    if (value === null || value === undefined) {
+                        return '';
+                    }
+
+                    var total = Math.round(value);
+                    var h = Math.floor(total / 3600);
+                    var m = Math.floor((total % 3600) / 60);
+                    var sec = total % 60;
+                    var mm = (h > 0 && m < 10 ? '0' : '') + m;
+                    return (h > 0 ? h + ':' : '') + mm + ':' + (sec < 10 ? '0' : '') + sec;
+                }
+
+                function nowText(m) {
+                    if (!m.IsConnected) {
+                        return 'disconnected ' + clock(m.DisconnectedSeconds);
+                    }
+
+                    if (!m.IsBuffering) {
+                        return 'ready';
+                    }
+
+                    return (m.BufferingForLoad ? 'loading ' : 'stalled ') + clock(m.BufferingSeconds);
+                }
+
+                function flagsText(m) {
+                    var flags = [];
+                    if (m.IgnoredByTimeout) {
+                        flags.push('given up on (timeout)');
+                    }
+
+                    if (m.Spectator) {
+                        flags.push('not following');
+                    } else if (m.IgnoreGroupWait && !m.IgnoredByTimeout) {
+                        flags.push('not waited for');
+                    }
+
+                    if (m.HotJoining) {
+                        flags.push('catching up');
+                    }
+
+                    if (m.CorrectionAttempts > 0) {
+                        flags.push(m.CorrectionAttempts + ' correction(s)');
+                    }
+
+                    return flags.join(', ');
+                }
+
+                function renderGroups(report) {
+                    var host = page.querySelector('#SyncPlayV2Groups');
+                    host.textContent = '';
+                    if (!report.Groups.length) {
+                        host.appendChild(el('p', 'No SyncPlay groups.'));
+                        return;
+                    }
+
+                    report.Groups.forEach(function (g) {
+                        host.appendChild(el('h3', g.GroupName + ' · ' + g.State + ' for ' + clock(g.StateSeconds), 'margin-bottom:.2em'));
+                        var item = g.ItemName
+                            ? g.ItemName + ' · ' + clock(g.PositionSeconds) + (g.RunTimeSeconds ? ' / ' + clock(g.RunTimeSeconds) : '')
+                            : 'Nothing queued';
+                        host.appendChild(el('div', item, 'opacity:.8;margin-bottom:.5em'));
+
+                        var table = el('table', null, 'width:100%;border-collapse:collapse;text-align:left;margin-bottom:1.2em');
+                        var head = el('tr');
+                        ['Member', 'Client', 'Protocol', 'Ping', 'Now', 'Flags'].forEach(function (h) {
+                            head.appendChild(el('th', h, 'padding:.2em .6em .2em 0;font-weight:600'));
+                        });
+                        table.appendChild(head);
+                        g.Members.forEach(function (m) {
+                            var row = el('tr');
+                            var client = (m.Client || '') + (m.DeviceName ? ' (' + m.DeviceName + ')' : '');
+                            [m.UserName, client, 'v' + m.ProtocolVersion, m.Ping + ' ms', nowText(m), flagsText(m)].forEach(function (v) {
+                                row.appendChild(el('td', v, 'padding:.2em .6em .2em 0;vertical-align:top'));
+                            });
+                            table.appendChild(row);
+                        });
+                        host.appendChild(table);
+                    });
+                }
+
+                function renderCounters(c) {
+                    var host = page.querySelector('#SyncPlayV2Counters');
+                    host.textContent = '';
+                    var rows = [
+                        ['Gave up waiting for a member that was loading', c.LoadTimeouts],
+                        ['Gave up waiting for a member that stalled', c.StallTimeouts],
+                        ['Rebuffers absorbed by the grace (nobody paused)', c.BufferingRecovered],
+                        ['Rebuffers that paused the group', c.BufferingApplied],
+                        ['Position corrections sent', c.Corrections],
+                        ['Hot joins (v2)', c.HotJoins],
+                        ['Private catch-ups (v2 rendezvous)', c.Rendezvous],
+                        ['Disconnections', c.Disconnects],
+                        ['Reconnected within the grace', c.Reconnects],
+                        ['Removed after the grace', c.GraceExpiries],
+                        ['Dead connections detected', c.ZombieSockets]
+                    ];
+                    var table = el('table', null, 'border-collapse:collapse');
+                    rows.forEach(function (r) {
+                        var row = el('tr');
+                        row.appendChild(el('td', r[0], 'padding:.15em 1.2em .15em 0'));
+                        row.appendChild(el('td', String(r[1]), 'text-align:right;font-variant-numeric:tabular-nums'));
+                        table.appendChild(row);
+                    });
+                    host.appendChild(table);
+                    host.appendChild(el('div', 'Counting since ' + new Date(c.Since).toLocaleString() + '.', 'opacity:.8;margin-top:.4em'));
+                }
+
+                function loadDiagnostics() {
+                    if (!page.isConnected) {
+                        clearInterval(refreshTimer);
+                        refreshTimer = null;
+                        return;
+                    }
+
+                    ApiClient.getJSON(ApiClient.getUrl('SyncPlay/V2/Diagnostics')).then(function (report) {
+                        lastReport = report;
+                        renderGroups(report);
+                        renderCounters(report.Counters);
+                    }).catch(function () {
+                        page.querySelector('#SyncPlayV2Groups').textContent = 'Diagnostics unavailable.';
+                    });
+                }
+
+                function anonymized() {
+                    var names = {};
+                    var next = 1;
+                    function alias(name) {
+                        if (!names[name]) {
+                            names[name] = 'member ' + next++;
+                        }
+
+                        return names[name];
+                    }
+
+                    return {
+                        GeneratedAt: lastReport.GeneratedAt,
+                        PluginVersion: lastReport.PluginVersion,
+                        EngineActive: lastStatus ? lastStatus.EngineActive : null,
+                        Timings: lastStatus ? lastStatus.Timings : null,
+                        Counters: lastReport.Counters,
+                        Groups: lastReport.Groups.map(function (g, i) {
+                            return {
+                                Group: 'group ' + (i + 1),
+                                State: g.State,
+                                StateSeconds: g.StateSeconds,
+                                StateVersion: g.StateVersion,
+                                HasItem: !!g.ItemName,
+                                PositionSeconds: g.PositionSeconds,
+                                RunTimeSeconds: g.RunTimeSeconds,
+                                QueueLength: g.QueueLength,
+                                Members: g.Members.map(function (m) {
+                                    var copy = Object.assign({}, m);
+                                    copy.UserName = alias(m.UserName);
+                                    delete copy.DeviceName;
+                                    return copy;
+                                })
+                            };
+                        })
+                    };
+                }
+
+                page.querySelector('#SyncPlayV2CopyReport').addEventListener('click', function () {
+                    if (!lastReport) {
+                        return;
+                    }
+
+                    var text = JSON.stringify(anonymized(), null, 2);
+                    var box = page.querySelector('#SyncPlayV2ReportText');
+                    function showBox() {
+                        box.value = text;
+                        box.style.display = 'block';
+                        box.select();
+                    }
+
+                    if (navigator.clipboard && window.isSecureContext) {
+                        navigator.clipboard.writeText(text).then(function () {
+                            Dashboard.alert('Report copied. User, device and group names and titles were removed.');
+                        }, showBox);
+                    } else {
+                        showBox();
+                    }
+                });
+
+                function loadStatus() {
+                    var status = page.querySelector('#SyncPlayV2Status');
+                    var detail = page.querySelector('#SyncPlayV2StatusDetail');
+                    ApiClient.getJSON(ApiClient.getUrl('SyncPlay/V2/Status')).then(function (s) {
+                        lastStatus = s;
+                        if (s.EngineActive) {
+                            status.textContent = 'Active: SyncPlay v2 ' + (s.PluginVersion || '') + ' is serving SyncPlay.';
+                        } else {
+                            status.textContent = 'NOT ACTIVE: the server is running stock SyncPlay. A server update likely changed how services are registered; check the server log for [SyncPlayV2].';
+                        }
+
+                        var t = s.Timings;
+                        detail.textContent = 'In effect: load ' + t.LoadTimeoutSeconds + ' s, stall ' + t.StallTimeoutSeconds
+                            + ' s, buffering grace ' + t.BufferingGraceSeconds + ' s, disconnect grace ' + t.DisconnectGraceSeconds
+                            + ' s, beacons every ' + t.PositionBeaconSeconds + ' s.';
+                    }).catch(function () {
+                        status.textContent = 'Status unavailable.';
+                        detail.textContent = '';
+                    });
+                }
+
+                page.addEventListener('pageshow', function () {
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                        page.querySelector('#HotJoin').checked = config.HotJoin !== false;
+                        numbers.forEach(function (id) {
+                            page.querySelector('#' + id).value = config[id];
+                        });
+                        Dashboard.hideLoadingMsg();
+                    });
+                    loadStatus();
+                    loadDiagnostics();
+                    if (!refreshTimer) {
+                        refreshTimer = setInterval(loadDiagnostics, 5000);
+                    }
+                });
+
+                page.addEventListener('pagehide', function () {
+                    clearInterval(refreshTimer);
+                    refreshTimer = null;
+                });
+
+                page.querySelector('#SyncPlayV2ConfigForm').addEventListener('submit', function (e) {
+                    e.preventDefault();
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                        config.HotJoin = page.querySelector('#HotJoin').checked;
+                        numbers.forEach(function (id) {
+                            var value = parseInt(page.querySelector('#' + id).value, 10);
+                            if (!isNaN(value)) {
+                                config[id] = value;
+                            }
+                        });
+                        return ApiClient.updatePluginConfiguration(pluginId, config);
+                    }).then(function (result) {
+                        Dashboard.processPluginConfigurationUpdateResult(result);
+                        loadStatus();
+                    });
+                    return false;
+                });
+            })();
+        </script>
+    </div>
+</body>
+</html>

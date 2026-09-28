@@ -14,6 +14,7 @@ using Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates;
 using MediaBrowser.Controller.SyncPlay.Queue;
 using MediaBrowser.Controller.SyncPlay.Requests;
 using MediaBrowser.Model.SyncPlay;
+using Jellyfin.Plugin.SyncPlayV2.Diagnostics;
 using Jellyfin.Plugin.SyncPlayV2.Wire;
 using Microsoft.Extensions.Logging;
 
@@ -75,19 +76,30 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         private DateTime _nextBeaconAt = DateTime.MaxValue;
 
         /// <summary>
+        /// Whether the next group-wide wait is an item load (a new queue, a new
+        /// playing item, a restart) rather than a seek within the loaded item.
+        /// Feature divergence (VENDORED.md): the load/stall timeout split.
+        /// </summary>
+        private bool _itemLoadPending;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="Group" /> class.
         /// </summary>
         /// <param name="loggerFactory">The logger factory.</param>
         /// <param name="userManager">The user manager.</param>
         /// <param name="sessionManager">The session manager.</param>
         /// <param name="libraryManager">The library manager.</param>
+        /// <param name="sender">The wire sender.</param>
+        /// <param name="versions">The protocol version registry.</param>
+        /// <param name="counters">The engine counters; a private set when omitted.</param>
         public Group(
             ILoggerFactory loggerFactory,
             IUserManager userManager,
             ISessionManager sessionManager,
             ILibraryManager libraryManager,
             Sender sender,
-            ProtocolVersionRegistry versions)
+            ProtocolVersionRegistry versions,
+            EngineCounters counters = null)
         {
             _loggerFactory = loggerFactory;
             _userManager = userManager;
@@ -95,6 +107,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             _libraryManager = libraryManager;
             _sender = sender;
             _versions = versions;
+            _counters = counters ?? new EngineCounters();
             _logger = loggerFactory.CreateLogger<Group>();
 
             _state = new IdleGroupState(loggerFactory);
@@ -103,6 +116,15 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         private readonly Sender _sender;
 
         private readonly ProtocolVersionRegistry _versions;
+
+        /// <summary>
+        /// What the engine did, for the diagnostics page. Feature divergence
+        /// (VENDORED.md): counted where the engine already logs the event.
+        /// </summary>
+        private readonly EngineCounters _counters;
+
+        /// <summary>When the group entered its current state, for diagnostics.</summary>
+        private DateTime _stateSince = DateTime.UtcNow;
 
         /// <summary>
         /// Gets the default ping value used for sessions.
@@ -362,6 +384,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             SendWireUpdate(session, "GroupJoined", GetWireInfo(IsV2Member(session.Id)), cancellationToken);
 
             _state.SessionJoined(this, _state.Type, session, cancellationToken);
+            MarkJoinerLoading(session);
 
             _logger.LogInformation("Session {SessionId} created group {GroupId}.", session.Id, GroupId.ToString());
         }
@@ -382,6 +405,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             SendGroupUpdate(session, SyncPlayBroadcastType.AllExceptCurrentSession, updateOthers, cancellationToken);
 
             _state.SessionJoined(this, _state.Type, session, cancellationToken);
+            MarkJoinerLoading(session);
 
             _logger.LogInformation("Session {SessionId} joined group {GroupId}.", session.Id, GroupId.ToString());
         }
@@ -405,6 +429,21 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             SendGroupUpdate(session, SyncPlayBroadcastType.AllExceptCurrentSession, updateOthers, cancellationToken);
 
             _logger.LogInformation("Session {SessionId} left group {GroupId}.", session.Id, GroupId.ToString());
+        }
+
+        /// <summary>
+        /// A member joining a group with something queued has to load it, which
+        /// is a load, not a stall. The states mark it buffering the way they
+        /// mark a stall; this is where the difference is recorded.
+        /// Feature divergence (VENDORED.md): the load/stall timeout split.
+        /// </summary>
+        /// <param name="session">The joining session.</param>
+        private void MarkJoinerLoading(SessionInfo session)
+        {
+            if (_participants.TryGetValue(session.Id, out GroupMember member) && member.IsBuffering && !member.HotJoining)
+            {
+                member.BufferingForLoad = true;
+            }
         }
 
         /// <summary>
@@ -507,6 +546,22 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <inheritdoc />
         public void BeginHotJoin(SessionInfo session, CancellationToken cancellationToken)
         {
+            if (_participants.ContainsKey(session.Id))
+            {
+                _counters.HotJoin();
+            }
+
+            StartCatchUp(session, cancellationToken);
+        }
+
+        /// <summary>
+        /// The hot-join mechanics, shared by a hot join and a rendezvous so each
+        /// can be counted as what it is.
+        /// </summary>
+        /// <param name="session">The member catching up.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        private void StartCatchUp(SessionInfo session, CancellationToken cancellationToken)
+        {
             if (!_participants.TryGetValue(session.Id, out GroupMember member))
             {
                 return;
@@ -568,7 +623,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             // scheduled Unpause. Nothing here is rendezvous-specific, which is
             // the point — a member that cannot catch up by seeking is in
             // exactly the position of one that has just walked in.
-            BeginHotJoin(session, cancellationToken);
+            _counters.Rendezvous();
+            StartCatchUp(session, cancellationToken);
         }
 
         /// <inheritdoc />
@@ -788,6 +844,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         {
             if (_participants.TryGetValue(session.Id, out GroupMember member))
             {
+                if (member.IsConnected)
+                {
+                    _counters.Disconnect();
+                }
+
                 member.IsConnected = false;
                 member.DisconnectedSince = DateTime.UtcNow;
                 // Flag like a group-wait timeout so that the member is automatically
@@ -812,6 +873,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 if (!member.IsConnected)
                 {
                     member.IsConnected = true;
+                    _counters.Reconnect();
                     BumpStateVersion();
                 }
             }
@@ -836,6 +898,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 // messages dropped while it had no open socket.
                 ResyncSession(session, cancellationToken);
                 return;
+            }
+
+            if (!member.IsConnected)
+            {
+                _counters.Reconnect();
             }
 
             member.Session = session;
@@ -892,18 +959,31 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <param name="timeout">The maximum time a member is allowed to keep the group waiting.</param>
         /// <returns>The list of sessions that outlived the timeout.</returns>
         public IReadOnlyList<SessionInfo> GetStalledBufferingSessions(TimeSpan timeout)
+            => GetStalledMembers(timeout, timeout).Select(stalled => stalled.Session).ToList();
+
+        /// <summary>
+        /// Gets the members the group has waited on for longer than their
+        /// timeout: <paramref name="loadTimeout"/> for a member loading at the
+        /// group's request, <paramref name="stallTimeout"/> for one that stalled
+        /// on its own. Feature divergence (VENDORED.md): the load/stall split.
+        /// </summary>
+        /// <param name="stallTimeout">The timeout for a member's own stall.</param>
+        /// <param name="loadTimeout">The timeout for a load the group asked for.</param>
+        /// <returns>Each stalled session with the timeout it outlived, and whether it was loading.</returns>
+        public IReadOnlyList<(SessionInfo Session, TimeSpan Timeout, bool Load)> GetStalledMembers(TimeSpan stallTimeout, TimeSpan loadTimeout)
         {
-            List<SessionInfo> stalled = null;
+            List<(SessionInfo, TimeSpan, bool)> stalled = null;
             var now = DateTime.UtcNow;
             foreach (var member in _participants.Values)
             {
+                var timeout = member.BufferingForLoad ? loadTimeout : stallTimeout;
                 if (member.IsBuffering && !member.IgnoreGroupWait && now - member.BufferingSince > timeout)
                 {
-                    (stalled ??= new List<SessionInfo>()).Add(member.Session);
+                    (stalled ??= new List<(SessionInfo, TimeSpan, bool)>()).Add((member.Session, timeout, member.BufferingForLoad));
                 }
             }
 
-            return stalled ?? (IReadOnlyList<SessionInfo>)Array.Empty<SessionInfo>();
+            return stalled ?? (IReadOnlyList<(SessionInfo, TimeSpan, bool)>)Array.Empty<(SessionInfo, TimeSpan, bool)>();
         }
 
         /// <summary>
@@ -967,8 +1047,19 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         public void SetState(IGroupState state)
         {
             _logger.LogInformation("Group {GroupId} switching from {FromStateType} to {ToStateType}.", GroupId.ToString(), _state.Type, state.Type);
+            if (!state.Type.Equals(_state.Type))
+            {
+                _stateSince = DateTime.UtcNow;
+            }
+
             this._state = state;
             BumpStateVersion();
+
+            if (!state.Type.Equals(GroupStateType.Waiting))
+            {
+                // A load that never reached a group-wide wait is not pending.
+                _itemLoadPending = false;
+            }
 
             if (!state.Type.Equals(GroupStateType.Playing))
             {
@@ -1146,6 +1237,95 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         }
 
         /// <inheritdoc />
+        public void RecordCorrection(SessionInfo session)
+        {
+            _counters.Correction();
+        }
+
+        /// <summary>
+        /// The group as the diagnostics page shows it: state, position, and for
+        /// every member the flags that decide how the group treats it.
+        /// Feature divergence (VENDORED.md): read-only, plugin-owned DTOs.
+        /// </summary>
+        /// <returns>The group's diagnostics.</returns>
+        public GroupDiagnostics GetDiagnostics()
+        {
+            var now = DateTime.UtcNow;
+            var positionTicks = PositionTicks;
+            if (_state.Type.Equals(GroupStateType.Playing))
+            {
+                positionTicks += Math.Max((now - LastActivity).Ticks, 0);
+            }
+
+            var playingItemId = PlayQueue.IsItemPlaying() ? PlayQueue.GetPlayingItemId() : Guid.Empty;
+            string itemName = null;
+            if (!playingItemId.Equals(Guid.Empty))
+            {
+                itemName = Content.Get(playingItemId)?.Name ?? _libraryManager.GetItemById(playingItemId)?.Name;
+            }
+
+            return new GroupDiagnostics
+            {
+                GroupId = GroupId,
+                GroupName = GroupName ?? string.Empty,
+                State = _state.Type,
+                StateSeconds = Math.Round((now - _stateSince).TotalSeconds, 1),
+                StateVersion = _stateVersion,
+                ItemName = itemName,
+                PositionSeconds = Math.Round(TimeSpan.FromTicks(positionTicks).TotalSeconds, 1),
+                RunTimeSeconds = Math.Round(TimeSpan.FromTicks(RunTimeTicks).TotalSeconds, 1),
+                QueueLength = PlayQueue.GetPlaylist().Count,
+                Members = _participants.Values.Select(member => new MemberDiagnostics
+                {
+                    UserName = member.UserName ?? string.Empty,
+                    Client = member.Session?.Client,
+                    DeviceName = member.Session?.DeviceName,
+                    ProtocolVersion = member.ProtocolVersion,
+                    ExternalContent = member.Session is not null && _versions.HasExternalContent(member.Session),
+                    Ping = member.Ping,
+                    IsConnected = member.IsConnected,
+                    DisconnectedSeconds = member.IsConnected ? null : Math.Round((now - member.DisconnectedSince).TotalSeconds, 1),
+                    IsBuffering = member.IsBuffering,
+                    BufferingSeconds = member.IsBuffering ? Math.Round((now - member.BufferingSince).TotalSeconds, 1) : null,
+                    BufferingForLoad = member.IsBuffering && member.BufferingForLoad,
+                    IgnoreGroupWait = member.IgnoreGroupWait,
+                    IgnoredByTimeout = member.IgnoredByTimeout,
+                    Spectator = member.IgnoreGroupWaitByRequest && member.IgnoreGroupWait,
+                    HotJoining = member.HotJoining,
+                    CorrectionAttempts = member.CorrectionAttempts,
+                }).ToList(),
+            };
+        }
+
+        /// <inheritdoc />
+        public bool IsSpectator(string sessionId)
+        {
+            return _participants.TryGetValue(sessionId, out GroupMember member)
+                && member.IgnoreGroupWaitByRequest
+                && member.IgnoreGroupWait;
+        }
+
+        /// <inheritdoc />
+        public bool RestartWaitFor(SessionInfo session)
+        {
+            if (!_participants.TryGetValue(session.Id, out GroupMember member)
+                || member.HotJoining
+                || !member.ResumeWaiting())
+            {
+                return false;
+            }
+
+            // IsBuffering is usually still set from the stall the group gave
+            // up on, so SetBuffering(.., true) would not restamp it.
+            member.BufferingSince = DateTime.UtcNow;
+            member.BufferingForLoad = false;
+            BumpStateVersion();
+
+            // A spectator keeps its own choice (see GroupMember.ResumeWaiting).
+            return !member.IgnoreGroupWait;
+        }
+
+        /// <inheritdoc />
         public void SetBuffering(SessionInfo session, bool isBuffering)
         {
             if (_participants.TryGetValue(session.Id, out GroupMember value))
@@ -1172,9 +1352,29 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <inheritdoc />
         public void SetAllBuffering(bool isBuffering)
         {
+            var now = DateTime.UtcNow;
             foreach (var session in _participants.Values)
             {
                 SetMemberBuffering(session, isBuffering);
+
+                // Fix divergence (VENDORED.md): a group-wide wait (Seek, new
+                // item) is a new wait for everyone, including a member that was
+                // already buffering — its old stall must not count against it.
+                if (isBuffering)
+                {
+                    session.BufferingSince = now;
+
+                    // Feature divergence (VENDORED.md): when the group changed
+                    // or restarted the item everyone is loading it, which can
+                    // mean starting a transcode — the load timeout applies. A
+                    // seek within the loaded item keeps the stall timeout.
+                    session.BufferingForLoad = _itemLoadPending;
+                }
+            }
+
+            if (isBuffering)
+            {
+                _itemLoadPending = false;
             }
         }
 
@@ -1183,6 +1383,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (isBuffering && !member.IsBuffering)
             {
                 member.BufferingSince = DateTime.UtcNow;
+
+                // A member that starts buffering on its own is stalling; the
+                // group-wide paths above re-mark it as loading.
+                member.BufferingForLoad = false;
             }
 
             member.IsBuffering = isBuffering;
@@ -1226,6 +1430,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             RunTimeTicks = ItemRunTimeTicks(PlayQueue.GetPlayingItemId());
             PositionTicks = startPositionTicks;
             LastActivity = DateTime.UtcNow;
+            _itemLoadPending = true;
             BumpStateVersion();
 
             return true;
@@ -1335,6 +1540,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         {
             PositionTicks = 0;
             LastActivity = DateTime.UtcNow;
+            _itemLoadPending = true;
         }
 
         /// <inheritdoc />

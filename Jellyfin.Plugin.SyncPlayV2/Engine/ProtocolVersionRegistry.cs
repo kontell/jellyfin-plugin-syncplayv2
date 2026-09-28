@@ -24,6 +24,12 @@ public class ProtocolVersionRegistry
     /// </summary>
     public const string ExternalContentCapability = "ExternalContent";
 
+    /// <summary>
+    /// The highest protocol version this server speaks, and so the highest
+    /// a device can negotiate: a client asking for more gets this.
+    /// </summary>
+    public const int ServerVersion = 2;
+
     private static readonly TimeSpan Ttl = TimeSpan.FromHours(12);
 
     private readonly ConcurrentDictionary<string, (int Version, bool ExternalContent, DateTime At)> _entries =
@@ -54,7 +60,10 @@ public class ProtocolVersionRegistry
             return;
         }
 
-        _entries[Key(client, deviceId)] = (version, externalContent, DateTime.UtcNow);
+        // Negotiated, not declared: the lower of what the client asked for and
+        // what the server speaks, and never below v1. A client asking for v3
+        // speaks v2 to this server; a 0 or a negative is a v1 client.
+        _entries[Key(client, deviceId)] = (Math.Clamp(version, 1, ServerVersion), externalContent, DateTime.UtcNow);
 
         // Opportunistic sweep; the registry stays tiny (one entry per device).
         if (_entries.Count > 4096)
