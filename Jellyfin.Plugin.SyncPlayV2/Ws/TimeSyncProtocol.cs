@@ -144,7 +144,11 @@ public sealed class ConnectionLimiter
         _total = total;
     }
 
-    /// <summary>Gets the connections currently held over all keys.</summary>
+    /// <summary>
+    /// Gets the slots held over all keys, plus any attempt still being decided:
+    /// under contention it can read above the total for a moment, though no
+    /// more than the total are ever admitted.
+    /// </summary>
     public int Total => Volatile.Read(ref _held);
 
     /// <summary>Takes a slot for the key, if one is free for the key and in total.</summary>

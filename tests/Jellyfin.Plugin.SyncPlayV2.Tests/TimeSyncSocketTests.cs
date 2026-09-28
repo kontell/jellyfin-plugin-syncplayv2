@@ -20,6 +20,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Tests;
 /// </summary>
 public class TimeSyncSocketTests
 {
+    // Every wait on the handler is bounded: a regression that blocks it
+    // fails the test instead of hanging the suite.
+    private static readonly TimeSpan Bound = TimeSpan.FromSeconds(10);
+
     [Fact]
     public async Task ChangingTheDeviceIdDoesNotGetPastTheCap()
     {
@@ -28,20 +32,20 @@ public class TimeSyncSocketTests
         // device id. The cap is on the token the server validated.
         var handler = Handler();
         var held = Enumerable.Range(1, 4).Select(i => Hold(handler, "token-1", "device-" + i)).ToList();
-        await Task.WhenAll(held.Select(h => h.Accepted));
+        await Task.WhenAll(held.Select(h => h.Accepted)).WaitAsync(Bound);
 
         var fifth = Request("token-1", "device-5");
-        await handler.WebSocketRequestHandler(fifth);
+        await handler.WebSocketRequestHandler(fifth).WaitAsync(Bound);
 
         Assert.Equal(StatusCodes.Status429TooManyRequests, fifth.Response.StatusCode);
 
         var otherToken = Hold(handler, "token-2", "device-1");
-        await otherToken.Accepted;
+        await otherToken.Accepted.WaitAsync(Bound);
         otherToken.Close();
-        await otherToken.Done;
+        await otherToken.Done.WaitAsync(Bound);
 
         held.ForEach(h => h.Close());
-        await Task.WhenAll(held.Select(h => h.Done));
+        await Task.WhenAll(held.Select(h => h.Done)).WaitAsync(Bound);
     }
 
     [Fact]
@@ -55,7 +59,7 @@ public class TimeSyncSocketTests
         for (var attempt = 0; attempt < 6; attempt++)
         {
             var context = Request("token-1", "device-1");
-            await Assert.ThrowsAnyAsync<Exception>(() => handler.WebSocketRequestHandler(context));
+            await Assert.ThrowsAnyAsync<Exception>(() => handler.WebSocketRequestHandler(context)).WaitAsync(Bound);
             Assert.NotEqual(StatusCodes.Status429TooManyRequests, context.Response.StatusCode);
         }
     }
@@ -67,9 +71,9 @@ public class TimeSyncSocketTests
         for (var round = 0; round < 3; round++)
         {
             var held = Enumerable.Range(1, 4).Select(_ => Hold(handler, "token-1", "device-1")).ToList();
-            await Task.WhenAll(held.Select(h => h.Accepted));
+            await Task.WhenAll(held.Select(h => h.Accepted)).WaitAsync(Bound);
             held.ForEach(h => h.Close());
-            await Task.WhenAll(held.Select(h => h.Done));
+            await Task.WhenAll(held.Select(h => h.Done)).WaitAsync(Bound);
         }
     }
 
