@@ -75,6 +75,13 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         private DateTime _nextBeaconAt = DateTime.MaxValue;
 
         /// <summary>
+        /// Whether the next group-wide wait is an item load (a new queue, a new
+        /// playing item, a restart) rather than a seek within the loaded item.
+        /// Feature divergence (VENDORED.md): the load/stall timeout split.
+        /// </summary>
+        private bool _itemLoadPending;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="Group" /> class.
         /// </summary>
         /// <param name="loggerFactory">The logger factory.</param>
@@ -362,6 +369,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             SendWireUpdate(session, "GroupJoined", GetWireInfo(IsV2Member(session.Id)), cancellationToken);
 
             _state.SessionJoined(this, _state.Type, session, cancellationToken);
+            MarkJoinerLoading(session);
 
             _logger.LogInformation("Session {SessionId} created group {GroupId}.", session.Id, GroupId.ToString());
         }
@@ -382,6 +390,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             SendGroupUpdate(session, SyncPlayBroadcastType.AllExceptCurrentSession, updateOthers, cancellationToken);
 
             _state.SessionJoined(this, _state.Type, session, cancellationToken);
+            MarkJoinerLoading(session);
 
             _logger.LogInformation("Session {SessionId} joined group {GroupId}.", session.Id, GroupId.ToString());
         }
@@ -405,6 +414,21 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             SendGroupUpdate(session, SyncPlayBroadcastType.AllExceptCurrentSession, updateOthers, cancellationToken);
 
             _logger.LogInformation("Session {SessionId} left group {GroupId}.", session.Id, GroupId.ToString());
+        }
+
+        /// <summary>
+        /// A member joining a group with something queued has to load it, which
+        /// is a load, not a stall. The states mark it buffering the way they
+        /// mark a stall; this is where the difference is recorded.
+        /// Feature divergence (VENDORED.md): the load/stall timeout split.
+        /// </summary>
+        /// <param name="session">The joining session.</param>
+        private void MarkJoinerLoading(SessionInfo session)
+        {
+            if (_participants.TryGetValue(session.Id, out GroupMember member) && member.IsBuffering && !member.HotJoining)
+            {
+                member.BufferingForLoad = true;
+            }
         }
 
         /// <summary>
@@ -892,18 +916,31 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <param name="timeout">The maximum time a member is allowed to keep the group waiting.</param>
         /// <returns>The list of sessions that outlived the timeout.</returns>
         public IReadOnlyList<SessionInfo> GetStalledBufferingSessions(TimeSpan timeout)
+            => GetStalledMembers(timeout, timeout).Select(stalled => stalled.Session).ToList();
+
+        /// <summary>
+        /// Gets the members the group has waited on for longer than their
+        /// timeout: <paramref name="loadTimeout"/> for a member loading at the
+        /// group's request, <paramref name="stallTimeout"/> for one that stalled
+        /// on its own. Feature divergence (VENDORED.md): the load/stall split.
+        /// </summary>
+        /// <param name="stallTimeout">The timeout for a member's own stall.</param>
+        /// <param name="loadTimeout">The timeout for a load the group asked for.</param>
+        /// <returns>Each stalled session with the timeout it outlived.</returns>
+        public IReadOnlyList<(SessionInfo Session, TimeSpan Timeout)> GetStalledMembers(TimeSpan stallTimeout, TimeSpan loadTimeout)
         {
-            List<SessionInfo> stalled = null;
+            List<(SessionInfo, TimeSpan)> stalled = null;
             var now = DateTime.UtcNow;
             foreach (var member in _participants.Values)
             {
+                var timeout = member.BufferingForLoad ? loadTimeout : stallTimeout;
                 if (member.IsBuffering && !member.IgnoreGroupWait && now - member.BufferingSince > timeout)
                 {
-                    (stalled ??= new List<SessionInfo>()).Add(member.Session);
+                    (stalled ??= new List<(SessionInfo, TimeSpan)>()).Add((member.Session, timeout));
                 }
             }
 
-            return stalled ?? (IReadOnlyList<SessionInfo>)Array.Empty<SessionInfo>();
+            return stalled ?? (IReadOnlyList<(SessionInfo, TimeSpan)>)Array.Empty<(SessionInfo, TimeSpan)>();
         }
 
         /// <summary>
@@ -969,6 +1006,12 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             _logger.LogInformation("Group {GroupId} switching from {FromStateType} to {ToStateType}.", GroupId.ToString(), _state.Type, state.Type);
             this._state = state;
             BumpStateVersion();
+
+            if (!state.Type.Equals(GroupStateType.Waiting))
+            {
+                // A load that never reached a group-wide wait is not pending.
+                _itemLoadPending = false;
+            }
 
             if (!state.Type.Equals(GroupStateType.Playing))
             {
@@ -1166,6 +1209,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             // IsBuffering is usually still set from the stall the group gave
             // up on, so SetBuffering(.., true) would not restamp it.
             member.BufferingSince = DateTime.UtcNow;
+            member.BufferingForLoad = false;
             BumpStateVersion();
 
             // A spectator keeps its own choice (see GroupMember.ResumeWaiting).
@@ -1210,7 +1254,18 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 if (isBuffering)
                 {
                     session.BufferingSince = now;
+
+                    // Feature divergence (VENDORED.md): when the group changed
+                    // or restarted the item everyone is loading it, which can
+                    // mean starting a transcode — the load timeout applies. A
+                    // seek within the loaded item keeps the stall timeout.
+                    session.BufferingForLoad = _itemLoadPending;
                 }
+            }
+
+            if (isBuffering)
+            {
+                _itemLoadPending = false;
             }
         }
 
@@ -1219,6 +1274,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (isBuffering && !member.IsBuffering)
             {
                 member.BufferingSince = DateTime.UtcNow;
+
+                // A member that starts buffering on its own is stalling; the
+                // group-wide paths above re-mark it as loading.
+                member.BufferingForLoad = false;
             }
 
             member.IsBuffering = isBuffering;
@@ -1262,6 +1321,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             RunTimeTicks = ItemRunTimeTicks(PlayQueue.GetPlayingItemId());
             PositionTicks = startPositionTicks;
             LastActivity = DateTime.UtcNow;
+            _itemLoadPending = true;
             BumpStateVersion();
 
             return true;
@@ -1371,6 +1431,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         {
             PositionTicks = 0;
             LastActivity = DateTime.UtcNow;
+            _itemLoadPending = true;
         }
 
         /// <inheritdoc />

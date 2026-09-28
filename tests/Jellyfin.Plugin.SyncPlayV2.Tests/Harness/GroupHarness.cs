@@ -163,6 +163,12 @@ internal sealed class Member
 
     public void Ping(long milliseconds) => Send(new PingGroupRequest(milliseconds));
 
+    public void Pause() => Send(new PauseGroupRequest());
+
+    public void Unpause() => Send(new UnpauseGroupRequest());
+
+    public void Stop() => Send(new StopGroupRequest());
+
     /// <summary>
     /// The wire's SetIgnoreWait, attributed to the member the way
     /// SyncPlayManagerV2.HandleRequest attributes it.
