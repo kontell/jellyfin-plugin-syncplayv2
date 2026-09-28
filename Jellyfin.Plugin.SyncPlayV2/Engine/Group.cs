@@ -1146,6 +1146,33 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         }
 
         /// <inheritdoc />
+        public bool IsSpectator(string sessionId)
+        {
+            return _participants.TryGetValue(sessionId, out GroupMember member)
+                && member.IgnoreGroupWaitByRequest
+                && member.IgnoreGroupWait;
+        }
+
+        /// <inheritdoc />
+        public bool RestartWaitFor(SessionInfo session)
+        {
+            if (!_participants.TryGetValue(session.Id, out GroupMember member)
+                || member.HotJoining
+                || !member.ResumeWaiting())
+            {
+                return false;
+            }
+
+            // IsBuffering is usually still set from the stall the group gave
+            // up on, so SetBuffering(.., true) would not restamp it.
+            member.BufferingSince = DateTime.UtcNow;
+            BumpStateVersion();
+
+            // A spectator keeps its own choice (see GroupMember.ResumeWaiting).
+            return !member.IgnoreGroupWait;
+        }
+
+        /// <inheritdoc />
         public void SetBuffering(SessionInfo session, bool isBuffering)
         {
             if (_participants.TryGetValue(session.Id, out GroupMember value))

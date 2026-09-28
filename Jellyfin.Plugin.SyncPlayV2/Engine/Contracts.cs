@@ -39,6 +39,24 @@ public interface IGroupStateContextV2 : IGroupStateContext
     bool IsIgnoredByTimeout(string sessionId);
 
     /// <summary>
+    /// Whether the member asked not to be waited for (SetIgnoreWait) and
+    /// still does: its stalls are its own and never stop the group.
+    /// </summary>
+    /// <param name="sessionId">The session identifier.</param>
+    /// <returns><c>true</c> if the member is a spectator by its own choice.</returns>
+    bool IsSpectator(string sessionId);
+
+    /// <summary>
+    /// The group waits again, from now, for a member it had given up on
+    /// after a wait timeout: the member reported Buffer before it ever
+    /// reported Ready, and a Waiting that does not wait for it has nobody
+    /// to end it. The member gets a fresh GroupWaitTimeout.
+    /// </summary>
+    /// <param name="session">The session that reported Buffer.</param>
+    /// <returns><c>true</c> if the member had been given up on and is waited for again.</returns>
+    bool RestartWaitFor(SessionInfo session);
+
+    /// <summary>
     /// Admits a v2 member into a Playing group without pausing anyone: the
     /// member is flagged as not-waited-on and pushed a state snapshot to
     /// rendezvous from.
