@@ -386,6 +386,12 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             _state.SessionJoined(this, _state.Type, session, cancellationToken);
             MarkJoinerLoading(session);
 
+            // Feature divergence (VENDORED.md): creating a group is not a
+            // request, so HandleRequest's reset does not run for the mark
+            // RestartCurrentItem set above. The creator is already marked as
+            // loading; the next group-wide wait is not a load by inheritance.
+            _itemLoadPending = false;
+
             _logger.LogInformation("Session {SessionId} created group {GroupId}.", session.Id, GroupId.ToString());
         }
 
