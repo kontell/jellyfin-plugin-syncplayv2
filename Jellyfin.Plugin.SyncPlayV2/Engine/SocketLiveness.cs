@@ -204,17 +204,14 @@ public class SocketLiveness : IWebSocketListener, IDisposable
 
     /// <summary>
     /// The sessions a socket belongs to: same client, device id and user,
-    /// the identity a Jellyfin 12 session is keyed by. The device id alone is
-    /// not unique — two apps on one device each have a session under it, and
-    /// so do two users of one app — and taking the first match could
-    /// disconnect the wrong one, or leave the dead one attached.
+    /// the identity a Jellyfin 12 session is keyed by.
     /// </summary>
     /// <param name="sessions">The server's sessions.</param>
     /// <param name="client">The socket's client.</param>
     /// <param name="deviceId">The socket's device id.</param>
     /// <param name="userId">The socket's user.</param>
     /// <returns>The matching sessions.</returns>
-    public static IReadOnlyList<SessionInfo> SessionsOf(IEnumerable<SessionInfo> sessions, string client, string deviceId, Guid userId)
+    internal static IReadOnlyList<SessionInfo> SessionsOf(IEnumerable<SessionInfo> sessions, string client, string deviceId, Guid userId)
         => sessions
             .Where(s => string.Equals(s.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(s.Client, client, StringComparison.OrdinalIgnoreCase)

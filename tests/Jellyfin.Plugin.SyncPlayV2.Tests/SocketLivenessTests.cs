@@ -156,7 +156,9 @@ public class SocketLivenessTests
     private FakeSocket Connect(SocketLiveness liveness, string? client, string? deviceId, Guid userId)
     {
         var auth = new AuthorizationInfo { Client = client!, DeviceId = deviceId! };
-        UserProperty.SetValue(auth, userId == Alice ? AliceUser : BobUser);
+        UserProperty.SetValue(auth, userId == Alice ? AliceUser
+            : userId == Bob ? BobUser
+            : throw new ArgumentOutOfRangeException(nameof(userId), "Only Alice and Bob have users here."));
         var socket = FakeSocket.Create(auth, _now);
         liveness.ProcessWebSocketConnectedAsync((IWebSocketConnection)(object)socket, null!).GetAwaiter().GetResult();
         return socket;
