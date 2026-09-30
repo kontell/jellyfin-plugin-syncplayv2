@@ -5,7 +5,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Database.Implementations.Enums;
 using MediaBrowser.Controller.Net;
+using MediaBrowser.Controller.SyncPlay;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -89,6 +91,20 @@ public class TimeSyncSocket : IWebSocketManager
         if (!auth.IsAuthenticated)
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            return;
+        }
+
+        // The rule Policies.SyncPlayHasAccess applies to a user, which Hello
+        // requires (the MVC policy cannot be evaluated here, outside MVC): no
+        // socket for a user denied SyncPlay, unless that user is still active
+        // in a group (access revoked mid-session). Unlike the policy, an API
+        // key without a user is still admitted, as before: only time sync is
+        // at stake here.
+        if (auth.User is { SyncPlayAccess: SyncPlayUserAccessType.None } user
+            && _serviceProvider.GetService<ISyncPlayManager>()?.IsUserActive(user.Id) != true)
+        {
+            _logger.LogDebug("Refusing a time-sync socket for user {UserId}: SyncPlay access is denied.", auth.UserId);
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
             return;
         }
 
