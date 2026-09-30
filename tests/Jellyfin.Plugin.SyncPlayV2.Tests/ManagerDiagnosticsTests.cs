@@ -341,7 +341,7 @@ public sealed class ManagerDiagnosticsTests : IDisposable
             Client = Client,
             SessionControllers = new ISessionController[] { controller },
         };
-        _versions.RegisterHello(Client, session.DeviceId, 1, externalContent: true);
+        _versions.RegisterHello(Client, session.DeviceId, session.UserId, 1, externalContent: true);
         return (session, controller);
     }
 
