@@ -87,6 +87,7 @@ public sealed class ManagerDiagnosticsTests : IDisposable
 
         Assert.Equal(new[] { "one", "two" }, report.Groups.Select(g => g.GroupName).OrderBy(n => n));
         Assert.Equal(_counters.Since, report.Counters.Since);
+        Assert.Equal(typeof(ISessionManager).Assembly.GetName().Version?.ToString(), report.ServerVersion);
     }
 
     // The shipped grace (2 s) plus the sweep's 1 s period and some slack.

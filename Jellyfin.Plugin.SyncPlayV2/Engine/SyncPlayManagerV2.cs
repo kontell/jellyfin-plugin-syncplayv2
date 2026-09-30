@@ -399,6 +399,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             {
                 GeneratedAt = DateTime.UtcNow,
                 PluginVersion = typeof(SyncPlayManagerV2).Assembly.GetName().Version?.ToString(),
+                // The server's own MediaBrowser.Controller, whatever the plugin was built against.
+                ServerVersion = typeof(ISessionManager).Assembly.GetName().Version?.ToString(),
                 Counters = _counters.Snapshot(),
             };
 

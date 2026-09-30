@@ -182,4 +182,30 @@ public class DiagnosticsTests
         Assert.Equal(1, counters.Disconnects);
         Assert.Equal(1, counters.Reconnects);
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AMembersClientVersionAndNextEpisodeAutoplayAreReported(bool autoplay)
+    {
+        // With "Play next episode automatically" on, Jellyfin Web expands a
+        // group's queue; the report has to show it to explain a web member
+        // that stops following the group.
+        var harness = new GroupHarness(UserDirectory.Create(autoplay));
+        harness.Join("a");
+
+        var member = harness.Group.GetDiagnostics().Members.Single();
+
+        Assert.Equal("1.2.3", member.ClientVersion);
+        Assert.Equal(autoplay, member.AutoplayNextEpisode);
+    }
+
+    [Fact]
+    public void AnUnknownUsersAutoplayIsReportedAsUnknown()
+    {
+        var harness = new GroupHarness();
+        harness.Join("a");
+
+        Assert.Null(harness.Group.GetDiagnostics().Members.Single().AutoplayNextEpisode);
+    }
 }
