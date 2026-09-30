@@ -38,10 +38,10 @@
                     <h2 class="sectionTitle">Since the server started</h2>
                     <div id="SyncPlayV2Counters"></div>
                     <br />
-                    <button is="emby-button" type="button" id="SyncPlayV2CopyReport" class="raised">
+                    <button is="emby-button" type="button" id="SyncPlayV2CopyReport" class="raised" disabled>
                         <span>Copy report for a bug report</span>
                     </button>
-                    <div class="fieldDescription">Copies the settings, versions, counters, groups (the last three closed ones included) and each group's last events as JSON with user names, device names, group names and titles removed, ready to paste into a GitHub issue.</div>
+                    <div class="fieldDescription">Copies the settings, versions, counters, groups (the last three closed ones included) and each group's last events as JSON with user names, device names, group names and titles removed, ready to paste into a GitHub issue. Available once the status above and the groups have loaded.</div>
                     <textarea id="SyncPlayV2ReportText" readonly="readonly" rows="10" style="display:none;width:100%;margin-top:.5em;font-family:monospace;"></textarea>
                 </div>
 
@@ -107,6 +107,8 @@
                 var openHistories = {};
                 var inFlight = false;
                 var generation = 0;
+                var statusRetrying = false;
+                var statusSeq = 0;
 
                 function el(tag, text, style) {
                     var node = document.createElement(tag);
@@ -289,6 +291,16 @@
                         lastReport = report;
                         renderGroups(report);
                         renderCounters(report.Counters);
+                        updateCopy();
+
+                        // A status that failed to load is retried with the
+                        // diagnostics, so Copy does not stay off for good.
+                        if (!lastStatus && !statusRetrying) {
+                            statusRetrying = true;
+                            loadStatus().then(function () {
+                                statusRetrying = false;
+                            });
+                        }
                     }).catch(function () {
                         if (mine === generation) {
                             page.querySelector('#SyncPlayV2Groups').textContent = 'Diagnostics unavailable.';
@@ -376,20 +388,17 @@
                     };
                 }
 
-                page.querySelector('#SyncPlayV2CopyReport').addEventListener('click', function () {
-                    if (!lastReport) {
-                        return;
-                    }
+                // Copy is on only once the status (the timings) and the report
+                // are both in, so the click writes to the clipboard at once:
+                // Firefox and Safari refuse a write that waits on a request.
+                function updateCopy() {
+                    page.querySelector('#SyncPlayV2CopyReport').disabled = !(lastStatus && lastReport);
+                }
 
-                    // The timings come from the status document, which loads
-                    // separately and may not have arrived (or may have failed).
-                    (lastStatus ? Promise.resolve() : loadStatus()).then(function () {
-                        if (lastStatus) {
-                            copy();
-                        } else {
-                            Dashboard.alert('The engine status could not be loaded, so the report would lack the timings. Try again in a moment.');
-                        }
-                    });
+                page.querySelector('#SyncPlayV2CopyReport').addEventListener('click', function () {
+                    if (lastStatus && lastReport) {
+                        copy();
+                    }
                 });
 
                 function copy() {
@@ -410,10 +419,17 @@
                     }
                 }
 
+                // Only the latest request is shown: the dashboard can fire
+                // pageshow twice, and an older reply must not overwrite a newer one.
                 function loadStatus() {
                     var status = page.querySelector('#SyncPlayV2Status');
                     var detail = page.querySelector('#SyncPlayV2StatusDetail');
+                    var mine = ++statusSeq;
                     return ApiClient.getJSON(ApiClient.getUrl('SyncPlay/V2/Status')).then(function (s) {
+                        if (mine !== statusSeq) {
+                            return;
+                        }
+
                         lastStatus = s;
                         if (s.EngineActive) {
                             status.textContent = 'Active: SyncPlay v2 ' + (s.PluginVersion || '') + ' is serving SyncPlay.';
@@ -426,9 +442,11 @@
                             + ' s, buffering grace ' + t.BufferingGraceSeconds + ' s, disconnect grace ' + t.DisconnectGraceSeconds
                             + ' s, beacons every ' + t.PositionBeaconSeconds + ' s.';
                     }).catch(function () {
-                        status.textContent = 'Status unavailable.';
-                        detail.textContent = '';
-                    });
+                        if (mine === statusSeq) {
+                            status.textContent = 'Status unavailable.';
+                            detail.textContent = '';
+                        }
+                    }).then(updateCopy);
                 }
 
                 // Users who may use SyncPlay and have next-episode autoplay on, in
