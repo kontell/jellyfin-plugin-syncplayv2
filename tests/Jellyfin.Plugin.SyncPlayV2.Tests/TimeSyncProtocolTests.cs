@@ -82,6 +82,7 @@ public class TimeSyncProtocolTests
         Assert.Equal(7, t0);
     }
 
+    /// <summary>Verifies independent, case-insensitive per-key limits and reuse of released slots.</summary>
     [Fact]
     public void TheLimiterCapsConnectionsPerKeyAndFreesThem()
     {
@@ -102,6 +103,7 @@ public class TimeSyncProtocolTests
         Assert.Equal(0, limiter.Count("web|device-2"));
     }
 
+    /// <summary>Verifies concurrent attempts respect the per-key cap and concurrent exits release every slot.</summary>
     [Fact]
     public void TheLimiterHoldsUnderContention()
     {
@@ -117,6 +119,7 @@ public class TimeSyncProtocolTests
         Assert.Equal(0, limiter.Count("web|device-1"));
     }
 
+    /// <summary>Verifies the total cap spans keys, refused attempts take no key slot, and released capacity is reusable.</summary>
     [Fact]
     public void TheLimiterCapsTheTotalOverAllKeys()
     {

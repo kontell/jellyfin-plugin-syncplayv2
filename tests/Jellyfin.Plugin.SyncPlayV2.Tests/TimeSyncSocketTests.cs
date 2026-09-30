@@ -24,6 +24,7 @@ public class TimeSyncSocketTests
     // fails the test instead of hanging the suite.
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(10);
 
+    /// <summary>Verifies that changing device IDs cannot bypass the token cap and another token is still admitted.</summary>
     [Fact]
     public async Task ChangingTheDeviceIdDoesNotGetPastTheCap()
     {
@@ -48,6 +49,7 @@ public class TimeSyncSocketTests
         await Task.WhenAll(held.Select(h => h.Done)).WaitAsync(Bound);
     }
 
+    /// <summary>Verifies that repeated failed WebSocket upgrades release their reserved slots.</summary>
     [Fact]
     public async Task AFailedUpgradeGivesItsSlotBack()
     {
@@ -64,6 +66,7 @@ public class TimeSyncSocketTests
         }
     }
 
+    /// <summary>Verifies that closing sockets frees all four token slots for subsequent connections.</summary>
     [Fact]
     public async Task AClosedSocketGivesItsSlotBack()
     {
@@ -77,9 +80,11 @@ public class TimeSyncSocketTests
         }
     }
 
+    /// <summary>Creates a time-sync handler with query-based authentication and no backing services.</summary>
     private static TimeSyncSocket Handler()
         => new(NoServices.Create(), FakeAuth.Create(), NullLogger<TimeSyncSocket>.Instance);
 
+    /// <summary>Creates a time-sync request carrying the token and device ID consumed by the fake authenticator.</summary>
     private static DefaultHttpContext Request(string token, string deviceId)
     {
         var context = new DefaultHttpContext();
@@ -88,6 +93,7 @@ public class TimeSyncSocketTests
         return context;
     }
 
+    /// <summary>Starts a request with a fake socket that stays open until the test closes it.</summary>
     private static HeldConnection Hold(TimeSyncSocket handler, string token, string deviceId)
     {
         var socket = new HeldSocket();
@@ -97,11 +103,14 @@ public class TimeSyncSocketTests
         return new HeldConnection(socket, done, context);
     }
 
+    /// <summary>Tracks a held socket, its handler task, and the request used to assert admission.</summary>
     private sealed record HeldConnection(HeldSocket Socket, Task Done, HttpContext Context)
     {
+        /// <summary>Gets a task that asserts the handler reached socket receive instead of refusing the request.</summary>
         public Task Accepted => Task.WhenAny(Socket.Receiving, Done).ContinueWith(_ =>
             Assert.True(Socket.Receiving.IsCompleted, "refused with " + Context.Response.StatusCode));
 
+        /// <summary>Signals a peer close frame so the handler can finish and release its slot.</summary>
         public void Close() => Socket.Close();
     }
 
@@ -109,10 +118,13 @@ public class TimeSyncSocketTests
     {
         private readonly WebSocket _socket;
 
+        /// <summary>Initializes a new instance of the <see cref="AcceptingFeature"/> class with the socket to accept.</summary>
         public AcceptingFeature(WebSocket socket) => _socket = socket;
 
+        /// <summary>Gets a value indicating whether the fake feature accepts WebSocket upgrades; always true.</summary>
         public bool IsWebSocketRequest => true;
 
+        /// <summary>Completes the upgrade by returning the socket supplied by the test.</summary>
         public Task<WebSocket> AcceptAsync(WebSocketAcceptContext context) => Task.FromResult(_socket);
     }
 
@@ -123,18 +135,25 @@ public class TimeSyncSocketTests
         private readonly TaskCompletionSource<WebSocketReceiveResult> _close = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private WebSocketState _state = WebSocketState.Open;
 
+        /// <summary>Gets a task that completes when the handler starts receiving from the socket.</summary>
         public Task Receiving => _receiving.Task;
 
+        /// <summary>Gets the close status; this fake does not record one.</summary>
         public override WebSocketCloseStatus? CloseStatus => null;
 
+        /// <summary>Gets the close description; this fake does not record one.</summary>
         public override string? CloseStatusDescription => null;
 
+        /// <summary>Gets the state tracked by the fake receive, close, and abort operations.</summary>
         public override WebSocketState State => _state;
 
+        /// <summary>Gets the negotiated subprotocol; this fake does not negotiate one.</summary>
         public override string? SubProtocol => null;
 
+        /// <summary>Completes the pending receive with a peer close frame.</summary>
         public void Close() => _close.TrySetResult(new WebSocketReceiveResult(0, WebSocketMessageType.Close, true));
 
+        /// <summary>Signals that receiving has started and waits for a simulated peer close or cancellation.</summary>
         public override Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken)
         {
             _receiving.TrySetResult();
@@ -148,20 +167,25 @@ public class TimeSyncSocketTests
                 TaskScheduler.Default);
         }
 
+        /// <summary>Marks the fake socket closed without performing a network handshake.</summary>
         public override Task CloseAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
         {
             _state = WebSocketState.Closed;
             return Task.CompletedTask;
         }
 
+        /// <summary>Closes the fake socket using the same state transition as <see cref="CloseAsync"/>.</summary>
         public override Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
             => CloseAsync(closeStatus, statusDescription, cancellationToken);
 
+        /// <summary>Completes a send without recording or transmitting the supplied data.</summary>
         public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
             => Task.CompletedTask;
 
+        /// <summary>Marks the fake socket as aborted.</summary>
         public override void Abort() => _state = WebSocketState.Aborted;
 
+        /// <summary>Performs no cleanup because the fake owns no network resources.</summary>
         public override void Dispose()
         {
         }
@@ -171,8 +195,10 @@ public class TimeSyncSocketTests
 /// <summary>An IAuthService that authenticates the token and device named in the query.</summary>
 public class FakeAuth : DispatchProxy
 {
+    /// <summary>Creates an authentication proxy that reads credentials from the test request query.</summary>
     public static IAuthService Create() => Create<IAuthService, FakeAuth>();
 
+    /// <summary>Returns authenticated authorization info using the request query token and device ID.</summary>
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
     {
         var request = (HttpRequest)args![0]!;
@@ -189,7 +215,9 @@ public class FakeAuth : DispatchProxy
 /// <summary>An IServiceProvider the time-sync path never asks.</summary>
 public class NoServices : DispatchProxy
 {
+    /// <summary>Creates a service provider proxy that returns null for every service request.</summary>
     public static IServiceProvider Create() => Create<IServiceProvider, NoServices>();
 
+    /// <summary>Returns null for every proxied service lookup.</summary>
     protected override object? Invoke(MethodInfo? targetMethod, object?[]? args) => null;
 }

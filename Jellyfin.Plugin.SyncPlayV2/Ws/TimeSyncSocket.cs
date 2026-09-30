@@ -88,6 +88,12 @@ public class TimeSyncSocket : IWebSocketManager
         }
     }
 
+    /// <summary>
+    /// Authenticates a time-sync request, enforces the token and total socket limits,
+    /// and releases the reserved slot when the socket closes or the upgrade fails.
+    /// </summary>
+    /// <param name="context">The HTTP request to upgrade to a time-sync socket.</param>
+    /// <returns>A task that completes when the request has been handled.</returns>
     private async Task HandleTimeSync(HttpContext context)
     {
         var auth = await _authService.Authenticate(context.Request).ConfigureAwait(false);
