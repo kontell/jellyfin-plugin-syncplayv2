@@ -364,6 +364,17 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
             {
                 _logger.LogDebug("Session {SessionId} reported wrong playlist item in group {GroupId}.", session.Id, context.GroupId.ToString());
 
+                // Fix divergence (VENDORED.md): a stall on an item the group has
+                // left stops a playing group like any other stall. Upstream
+                // returned before pausing anyone and before setting
+                // ResumePlaying: the others played on while the group sat in
+                // Waiting, and the member's Ready ended the wait in Paused, at
+                // the position the group had when it last resumed.
+                if (prevState.Equals(GroupStateType.Playing))
+                {
+                    PauseGroupForStall(context, session, cancellationToken);
+                }
+
                 var playQueueUpdate = context.GetPlayQueueUpdate(PlayQueueUpdateReason.SetCurrentItem);
                 var updateSession = new SyncPlayPlayQueueUpdate(context.GroupId, playQueueUpdate);
                 context.SendGroupUpdate(session, SyncPlayBroadcastType.CurrentSession, updateSession, cancellationToken);
@@ -374,26 +385,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
 
             if (prevState.Equals(GroupStateType.Playing))
             {
-                // Resume playback when all ready.
-                ResumePlaying = true;
-
-                context.SetBuffering(session, true);
-
-                // Pause group and compute the media playback position.
-                var currentTime = DateTime.UtcNow;
-                var elapsedTime = currentTime - context.LastActivity;
-                context.LastActivity = currentTime;
-                // Elapsed time is negative if event happens
-                // during the delay added to account for latency.
-                // In this phase clients haven't started the playback yet.
-                // In other words, LastActivity is in the future,
-                // when playback unpause is supposed to happen.
-                // Seek only if playback actually started.
-                context.PositionTicks += Math.Max(elapsedTime.Ticks, 0);
-
-                // Send pause command to all non-buffering sessions.
-                var command = context.NewSyncPlayCommand(SendCommandType.Pause);
-                context.SendCommand(session, SyncPlayBroadcastType.AllReady, command, cancellationToken);
+                PauseGroupForStall(context, session, cancellationToken);
             }
             else if (prevState.Equals(GroupStateType.Paused))
             {
@@ -624,6 +616,38 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// A playing group stops for a member's stall: the group resumes when
+        /// everyone is ready, the member is recorded as buffering, the group's
+        /// position is brought up to now, and everyone else is paused.
+        /// </summary>
+        /// <param name="context">The context of the state.</param>
+        /// <param name="session">The session that stalled.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        private void PauseGroupForStall(IGroupStateContext context, SessionInfo session, CancellationToken cancellationToken)
+        {
+            // Resume playback when all ready.
+            ResumePlaying = true;
+
+            context.SetBuffering(session, true);
+
+            // Pause group and compute the media playback position.
+            var currentTime = DateTime.UtcNow;
+            var elapsedTime = currentTime - context.LastActivity;
+            context.LastActivity = currentTime;
+            // Elapsed time is negative if event happens
+            // during the delay added to account for latency.
+            // In this phase clients haven't started the playback yet.
+            // In other words, LastActivity is in the future,
+            // when playback unpause is supposed to happen.
+            // Seek only if playback actually started.
+            context.PositionTicks += Math.Max(elapsedTime.Ticks, 0);
+
+            // Send pause command to all non-buffering sessions.
+            var command = context.NewSyncPlayCommand(SendCommandType.Pause);
+            context.SendCommand(session, SyncPlayBroadcastType.AllReady, command, cancellationToken);
         }
 
         /// <summary>

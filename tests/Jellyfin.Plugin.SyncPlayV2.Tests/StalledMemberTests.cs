@@ -129,6 +129,49 @@ public class StalledMemberTests
     }
 
     [Fact]
+    public void AStallOnAStaleItemPausesAPlayingGroupAndResumesIt()
+    {
+        // A client still on an item the group has left reports Buffer while
+        // the group plays. The wrong-item branch returned before pausing
+        // anyone and before setting ResumePlaying: the others played on, and
+        // the member's Ready ended the wait in Paused.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+
+        b.Buffer(Minute, playlistItemId: Guid.NewGuid());
+
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        Assert.Contains(a.Commands, command => command.Command == "Pause");
+        Assert.DoesNotContain(b.Commands, command => command.Command == "Pause");
+
+        a.Forget();
+        b.Ready(Minute, isPlaying: false);
+
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        Assert.Contains(a.Commands, command => command.Command == "Unpause");
+    }
+
+    [Fact]
+    public void AStallOnAStaleItemThatTimesOutResumesThePlayingGroup()
+    {
+        // The same wait ended by the timeout instead of a Ready: the group
+        // gives up on the member and carries on playing, not paused.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+
+        b.Buffer(Minute, playlistItemId: Guid.NewGuid());
+        a.Forget();
+        b.TimeOut();
+
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        Assert.Contains(a.Commands, command => command.Command == "Unpause");
+    }
+
+    [Fact]
     public void ASpectatorsBufferingDoesNotStopAPausedGroup()
     {
         // Paused moved every Buffer to Waiting unconditionally, a spectator's
