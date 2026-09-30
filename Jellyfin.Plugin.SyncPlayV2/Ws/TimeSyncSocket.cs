@@ -35,12 +35,7 @@ public class TimeSyncSocket : IWebSocketManager
     /// </summary>
     private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(10);
 
-    /// <summary>
-    /// Concurrent time-sync sockets per access token. Client and device id
-    /// are whatever the caller puts in its Authorization header, so a limit
-    /// on them is a limit a caller picks its way around; the token is the
-    /// credential the server validated.
-    /// </summary>
+    /// <summary>Concurrent time-sync sockets per access token.</summary>
     private const int SocketsPerToken = 4;
 
     /// <summary>Concurrent time-sync sockets over the whole server.</summary>
@@ -88,12 +83,6 @@ public class TimeSyncSocket : IWebSocketManager
         }
     }
 
-    /// <summary>
-    /// Authenticates a time-sync request, enforces the token and total socket limits,
-    /// and releases the reserved slot when the socket closes or the upgrade fails.
-    /// </summary>
-    /// <param name="context">The HTTP request to upgrade to a time-sync socket.</param>
-    /// <returns>A task that completes when the request has been handled.</returns>
     private async Task HandleTimeSync(HttpContext context)
     {
         var auth = await _authService.Authenticate(context.Request).ConfigureAwait(false);
@@ -106,7 +95,7 @@ public class TimeSyncSocket : IWebSocketManager
         var key = LimitKey(auth);
         if (!_limiter.TryEnter(key))
         {
-            _logger.LogWarning("Refusing a time-sync socket for device {DeviceId} ({Client}): {PerToken} already open for its token, or {Total} on the server.", auth.DeviceId, auth.Client, SocketsPerToken, SocketsInTotal);
+            _logger.LogWarning("Refusing a time-sync socket for device {DeviceId} ({Client}): {Held}/{PerToken} open for its token, {Total}/{MaxTotal} on the server.", auth.DeviceId, auth.Client, _limiter.Count(key), SocketsPerToken, _limiter.Total, SocketsInTotal);
             context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
             return;
         }

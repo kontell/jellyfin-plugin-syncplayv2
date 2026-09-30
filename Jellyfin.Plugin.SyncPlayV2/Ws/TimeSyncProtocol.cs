@@ -156,31 +156,43 @@ public sealed class ConnectionLimiter
     /// <returns>Whether a slot was taken; each true must be matched by <see cref="Exit"/>.</returns>
     public bool TryEnter(string key)
     {
-        if (Interlocked.Increment(ref _held) > _total)
-        {
-            Interlocked.Decrement(ref _held);
-            return false;
-        }
-
+        // The key first: a key at its cap must not hold total capacity, even
+        // for a moment, that another key's attempt is then refused over.
         while (true)
         {
             var current = _counts.GetOrAdd(key, 0);
             if (current >= _perKey)
             {
-                Interlocked.Decrement(ref _held);
                 return false;
             }
 
             if (_counts.TryUpdate(key, current + 1, current))
             {
-                return true;
+                break;
             }
         }
+
+        if (Interlocked.Increment(ref _held) > _total)
+        {
+            Interlocked.Decrement(ref _held);
+            ReleaseKey(key);
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>Releases a slot taken by <see cref="TryEnter"/>.</summary>
     /// <param name="key">The key.</param>
     public void Exit(string key)
+    {
+        if (ReleaseKey(key))
+        {
+            Interlocked.Decrement(ref _held);
+        }
+    }
+
+    private bool ReleaseKey(string key)
     {
         while (_counts.TryGetValue(key, out var current))
         {
@@ -188,16 +200,16 @@ public sealed class ConnectionLimiter
             {
                 if (_counts.TryRemove(new System.Collections.Generic.KeyValuePair<string, int>(key, current)))
                 {
-                    Interlocked.Decrement(ref _held);
-                    return;
+                    return true;
                 }
             }
             else if (_counts.TryUpdate(key, current - 1, current))
             {
-                Interlocked.Decrement(ref _held);
-                return;
+                return true;
             }
         }
+
+        return false;
     }
 
     /// <summary>The connections currently held for a key.</summary>

@@ -82,7 +82,6 @@ public class TimeSyncProtocolTests
         Assert.Equal(7, t0);
     }
 
-    /// <summary>Verifies independent, case-insensitive per-key limits and reuse of released slots.</summary>
     [Fact]
     public void TheLimiterCapsConnectionsPerKeyAndFreesThem()
     {
@@ -103,7 +102,6 @@ public class TimeSyncProtocolTests
         Assert.Equal(0, limiter.Count("web|device-2"));
     }
 
-    /// <summary>Verifies concurrent attempts respect the per-key cap and concurrent exits release every slot.</summary>
     [Fact]
     public void TheLimiterHoldsUnderContention()
     {
@@ -119,7 +117,6 @@ public class TimeSyncProtocolTests
         Assert.Equal(0, limiter.Count("web|device-1"));
     }
 
-    /// <summary>Verifies the total cap spans keys, refused attempts take no key slot, and released capacity is reusable.</summary>
     [Fact]
     public void TheLimiterCapsTheTotalOverAllKeys()
     {
@@ -136,5 +133,39 @@ public class TimeSyncProtocolTests
         limiter.Exit("b");
         Assert.True(limiter.TryEnter("d"));
         Assert.Equal(3, limiter.Total);
+    }
+
+    [Fact]
+    public async Task AKeyAtItsCapDoesNotCrowdOutAnotherKey()
+    {
+        // One slot left in total. Attempts on a key already at its cap, however
+        // many and however concurrent, never take it from another key.
+        var limiter = new ConnectionLimiter(1, 2);
+        Assert.True(limiter.TryEnter("capped"));
+
+        using var stop = new System.Threading.CancellationTokenSource();
+        var spam = Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                Assert.False(limiter.TryEnter("capped"));
+            }
+        })).ToList();
+
+        try
+        {
+            for (var i = 0; i < 20000; i++)
+            {
+                Assert.True(limiter.TryEnter("other"), "refused on attempt " + i);
+                limiter.Exit("other");
+            }
+        }
+        finally
+        {
+            stop.Cancel();
+            await Task.WhenAll(spam);
+        }
+
+        Assert.Equal(1, limiter.Total);
     }
 }
