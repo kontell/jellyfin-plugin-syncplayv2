@@ -180,6 +180,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
         /// <inheritdoc />
         public override void HandleRequest(NextItemGroupRequest request, IGroupStateContext context, GroupStateType prevState, SessionInfo session, CancellationToken cancellationToken)
         {
+            if (IsStaleQueueStep(context, request.PlaylistItemId, session))
+            {
+                return;
+            }
+
             // Change state.
             var waitingState = new WaitingGroupState(LoggerFactory);
             context.SetState(waitingState);
@@ -189,6 +194,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
         /// <inheritdoc />
         public override void HandleRequest(PreviousItemGroupRequest request, IGroupStateContext context, GroupStateType prevState, SessionInfo session, CancellationToken cancellationToken)
         {
+            if (IsStaleQueueStep(context, request.PlaylistItemId, session))
+            {
+                return;
+            }
+
             // Change state.
             var waitingState = new WaitingGroupState(LoggerFactory);
             context.SetState(waitingState);

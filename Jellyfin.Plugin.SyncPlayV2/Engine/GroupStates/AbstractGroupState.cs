@@ -1,5 +1,6 @@
 #nullable disable
 
+using System;
 using System.Threading;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Controller.SyncPlay;
@@ -208,6 +209,27 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
         protected static bool IsSpectatorStall(IGroupStateContext context, SessionInfo session)
         {
             return context is IGroupStateContextV2 v2 && v2.IsSpectator(session.Id);
+        }
+
+        /// <summary>
+        /// Whether a Next or Previous names an entry the group is no longer
+        /// playing, and is to be dropped before the group leaves its state:
+        /// the Waiting handler drops it too, but only after the group has
+        /// entered a Waiting no member is buffering for (VENDORED.md).
+        /// </summary>
+        /// <param name="context">The context of the state.</param>
+        /// <param name="playlistItemId">The entry the request names.</param>
+        /// <param name="session">The session that sent it.</param>
+        /// <returns><c>true</c> if the request is stale.</returns>
+        protected bool IsStaleQueueStep(IGroupStateContext context, Guid playlistItemId, SessionInfo session)
+        {
+            if (playlistItemId.Equals(context.PlayQueue.GetPlayingItemPlaylistId()))
+            {
+                return false;
+            }
+
+            _logger.LogDebug("Session {SessionId} asked to leave an item group {GroupId} has already left; ignoring it.", session.Id, context.GroupId.ToString());
+            return true;
         }
 
         /// <inheritdoc />
