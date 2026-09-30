@@ -341,9 +341,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 return;
             }
 
-            // Fix divergence (VENDORED.md, #14): a spectator's stall never holds
-            // the group (see IsSpectatorStall); Playing and Paused absorb it
-            // before coming here, and so does a group already waiting.
+            // A wait already in progress must not start counting a spectator
+            // (VENDORED.md, #14).
             if (IsSpectatorStall(context, session))
             {
                 return;
