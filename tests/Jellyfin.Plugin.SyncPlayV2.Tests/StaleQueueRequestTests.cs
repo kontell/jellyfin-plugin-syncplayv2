@@ -117,6 +117,46 @@ public class StaleQueueRequestTests
     }
 
     [Fact]
+    public void ANextPastTheLastItemWhileWaitingKeepsTheWait()
+    {
+        // The group moved to the last item and waits for everyone to load
+        // it; another Next (for that item, so not stale) has nowhere to go.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlayingTwoItems(new[] { a, b });
+        a.NextItem();
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+
+        b.NextItem();
+
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        a.Ready();
+        b.Ready();
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        Assert.DoesNotContain(a.Commands, command => command.Command == "Stop");
+    }
+
+    [Fact]
+    public void APreviousBeforeTheFirstItemWhileWaitingKeepsTheWait()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlayingTwoItems(new[] { a, b });
+        b.Buffer();
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+
+        a.PreviousItem(harness.PlaylistItemId);
+
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        b.Ready();
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        Assert.DoesNotContain(a.Commands, command => command.Command == "Stop");
+        Assert.DoesNotContain(b.Commands, command => command.Command == "Stop");
+    }
+
+    [Fact]
     public void ACurrentNextStillMovesTheGroup()
     {
         var harness = new GroupHarness();

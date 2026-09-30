@@ -724,6 +724,13 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 // Reset status of sessions and await for all Ready events.
                 context.SetAllBuffering(true);
             }
+            else if (prevState.Equals(GroupStateType.Waiting))
+            {
+                // Fix divergence (VENDORED.md): while the group already waits, a
+                // step with nowhere to go is a no-op; leaving Waiting would drop
+                // a load still in progress.
+                _logger.LogDebug("No next item available in group {GroupId}; it keeps waiting.", context.GroupId.ToString());
+            }
             else
             {
                 // Return to old state.
@@ -769,6 +776,13 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
 
                 // Reset status of sessions and await for all Ready events.
                 context.SetAllBuffering(true);
+            }
+            else if (prevState.Equals(GroupStateType.Waiting))
+            {
+                // Fix divergence (VENDORED.md): while the group already waits, a
+                // step with nowhere to go is a no-op; leaving Waiting would drop
+                // a load still in progress.
+                _logger.LogDebug("No previous item available in group {GroupId}; it keeps waiting.", context.GroupId.ToString());
             }
             else
             {
