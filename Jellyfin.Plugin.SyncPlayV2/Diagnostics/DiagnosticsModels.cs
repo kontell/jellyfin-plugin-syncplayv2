@@ -76,6 +76,47 @@ public class GroupDiagnostics
 
     /// <summary>Gets or sets the members.</summary>
     public List<MemberDiagnostics> Members { get; set; } = new();
+
+    /// <summary>Gets or sets the group's last events, newest first.</summary>
+    public List<GroupEvent> History { get; set; } = new();
+
+    /// <summary>
+    /// Gets or sets how long ago a closed group closed; null for a live group.
+    /// A closed group's other ages, its history's included, count from its closing.
+    /// </summary>
+    public double? ClosedSecondsAgo { get; set; }
+
+    /// <summary>
+    /// A copy of this closed group's diagnostics, dated from now. Shallow: the
+    /// lists are shared, which holds because a kept snapshot is never changed.
+    /// </summary>
+    /// <param name="secondsAgo">How long ago the group closed.</param>
+    /// <returns>The copy.</returns>
+    internal GroupDiagnostics ClosedAgo(double secondsAgo)
+    {
+        var copy = (GroupDiagnostics)MemberwiseClone();
+        copy.ClosedSecondsAgo = secondsAgo;
+        return copy;
+    }
+}
+
+/// <summary>One event in a group's history.</summary>
+public class GroupEvent
+{
+    /// <summary>Gets or sets how long ago it happened, in seconds.</summary>
+    public double SecondsAgo { get; set; }
+
+    /// <summary>Gets or sets what happened: a request type or an engine event.</summary>
+    public string Event { get; set; } = string.Empty;
+
+    /// <summary>Gets or sets the member it concerns, if any (user name).</summary>
+    public string? Member { get; set; }
+
+    /// <summary>Gets or sets numbers and flags about it; never a title or a name.</summary>
+    public string? Detail { get; set; }
+
+    /// <summary>Gets or sets the group's state after it.</summary>
+    public GroupStateType State { get; set; }
 }
 
 /// <summary>One member as the engine sees it: the flags that decide how the group treats it.</summary>
@@ -163,4 +204,7 @@ public class DiagnosticsReport
 
     /// <summary>Gets or sets the groups.</summary>
     public List<GroupDiagnostics> Groups { get; set; } = new();
+
+    /// <summary>Gets or sets the last groups that closed, newest first, as they were when they closed.</summary>
+    public List<GroupDiagnostics> ClosedGroups { get; set; } = new();
 }

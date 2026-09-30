@@ -72,7 +72,17 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <remarks>
         /// This lock has priority on locks made on <see cref="Group"/>.
         /// </remarks>
+        /// <summary>How many closed groups the diagnostics report keeps.</summary>
+        internal const int ClosedGroupsKept = 3;
+
         private readonly Lock _groupsLock = new();
+
+        /// <summary>
+        /// The last groups that closed, newest first, under <see cref="_groupsLock"/>:
+        /// a group closes when its last member leaves, and its history with it,
+        /// so a stall that made everyone leave could not be read afterwards.
+        /// </summary>
+        private readonly LinkedList<(DateTime ClosedAt, GroupDiagnostics Snapshot)> _closedGroups = new();
 
         // Feature divergence (VENDORED.md): the timings below were constants;
         // they are read from the plugin configuration on every use, so a saved
@@ -314,6 +324,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                         {
                             _logger.LogInformation("Group {GroupId} is empty, removing it.", group.GroupId);
                             _groups.Remove(group.GroupId, out _);
+                            RememberClosedGroup(group);
                         }
                     }
                 }
@@ -415,12 +426,32 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                         report.Groups.Add(group.GetDiagnostics());
                     }
                 }
+
+                foreach (var (closedAt, snapshot) in _closedGroups)
+                {
+                    // A group can close between GeneratedAt and this lock.
+                    report.ClosedGroups.Add(snapshot.ClosedAgo(Math.Max(0, Math.Round((report.GeneratedAt - closedAt).TotalSeconds, 1))));
+                }
             }
 
             // Outside the locks: a user lookup can be a database query.
             MemberUsers.FillAutoplay(report.Groups, _userManager);
 
             return report;
+        }
+
+        /// <summary>
+        /// Keeps a closed group's diagnostics, history included, for the report.
+        /// Called under <see cref="_groupsLock"/> and the group's lock.
+        /// </summary>
+        /// <param name="group">The group that closed.</param>
+        private void RememberClosedGroup(Group group)
+        {
+            _closedGroups.AddFirst((DateTime.UtcNow, group.GetDiagnostics()));
+            if (_closedGroups.Count > ClosedGroupsKept)
+            {
+                _closedGroups.RemoveLast();
+            }
         }
 
         /// <inheritdoc />

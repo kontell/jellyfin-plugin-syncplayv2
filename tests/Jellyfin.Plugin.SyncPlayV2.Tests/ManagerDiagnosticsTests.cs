@@ -174,6 +174,50 @@ public sealed class ManagerDiagnosticsTests : IDisposable
         Assert.Equal(1, _manager.GetDiagnostics().Counters.BufferingRecovered);
     }
 
+    [Fact]
+    public void AClosedGroupKeepsItsHistoryInTheReport()
+    {
+        // A group closes when its last member leaves, and the members of a
+        // group that stalled for good are the ones who leave: its history is
+        // what the report most needs then.
+        var (a, b, playlistItemId) = StartPlaying();
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        _manager.LeaveGroup(a, new LeaveGroupRequest(), CancellationToken.None);
+        _manager.LeaveGroup(b, new LeaveGroupRequest(), CancellationToken.None);
+
+        var report = _manager.GetDiagnostics();
+
+        Assert.Empty(report.Groups);
+        var closed = Assert.Single(report.ClosedGroups);
+        Assert.Equal("manager", closed.GroupName);
+        Assert.NotNull(closed.ClosedSecondsAgo);
+        Assert.Equal(new[] { "Left", "Left" }, closed.History.Take(2).Select(e => e.Event));
+        Assert.Contains(closed.History, e => e.Event == "Play");
+    }
+
+    [Fact]
+    public void OnlyTheLastClosedGroupsAreKeptNewestFirst()
+    {
+        for (var i = 0; i < SyncPlayManagerV2.ClosedGroupsKept + 2; i++)
+        {
+            var (a, _) = Session("a" + i);
+            _manager.NewGroup(a, new NewGroupRequest("group " + i), CancellationToken.None);
+            _manager.LeaveGroup(a, new LeaveGroupRequest(), CancellationToken.None);
+        }
+
+        var names = _manager.GetDiagnostics().ClosedGroups.Select(g => g.GroupName).ToList();
+
+        Assert.Equal(new[] { "group 4", "group 3", "group 2" }, names);
+    }
+
+    [Fact]
+    public void ALiveGroupHasNoClosingTime()
+    {
+        StartPlaying();
+
+        Assert.Null(_manager.GetDiagnostics().Groups.Single().ClosedSecondsAgo);
+    }
+
     private static void WaitUntil(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow + PastTheGrace;
