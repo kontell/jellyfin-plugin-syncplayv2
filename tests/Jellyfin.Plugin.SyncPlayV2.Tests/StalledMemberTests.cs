@@ -208,5 +208,8 @@ public class StalledMemberTests
 
         Assert.Equal(GroupStateType.Waiting, harness.State);
         Assert.Empty(harness.Group.GetStalledBufferingSessions(Timeout));
+
+        Thread.Sleep(Timeout + TimeSpan.FromMilliseconds(100));
+        Assert.Contains(harness.Group.GetStalledBufferingSessions(Timeout), session => session.Id == b.Session.Id);
     }
 }
