@@ -463,9 +463,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 return;
             }
 
-            if (request is ReadyGroupRequest && CancelDeferredBuffering(session.Id) is { WouldPause: true })
+            if (request is ReadyGroupRequest && CancelDeferredBuffering(session.Id) is { } deferred)
             {
-                _counters.BufferingRecovered();
+                CountRecovery(deferred);
             }
 
             // This entry point is the wire's; the engine's own synthesized
@@ -709,11 +709,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     // Keep the first report; a member that is still buffering does not get more grace.
                     if (!_deferredBuffering.ContainsKey(session.Id))
                     {
-                        // Diagnostics: a hot-joiner's or a spectator's stall is its
-                        // own either way, so the grace neither absorbs a pause for it
-                        // nor lets one through.
-                        var wouldPause = !group.IsHotJoining(session.Id) && !group.IsSpectator(session.Id);
-                        _deferredBuffering[session.Id] = new DeferredBuffering(session, request, group.GroupId, DateTime.UtcNow.Add(grace), wouldPause);
+                        _deferredBuffering[session.Id] = new DeferredBuffering(session, request, group.GroupId, DateTime.UtcNow.Add(grace));
                         _logger.LogDebug("Session {SessionId} started buffering in group {GroupId}, holding back the report for {Grace}.", session.Id, group.GroupId.ToString(), grace);
                     }
                 }
@@ -733,6 +729,36 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 }
 
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Counts a held-back Buffer that Ready cancelled as a pause spared only
+        /// if applying it now would pause the group: the state machine absorbs a
+        /// hot-joiner's or a spectator's stall, whatever the member was when the
+        /// Buffer was held back.
+        /// </summary>
+        /// <param name="deferred">The held-back Buffer that Ready cancelled.</param>
+        private void CountRecovery(DeferredBuffering deferred)
+        {
+            var sessionId = deferred.Session.Id;
+            if (!_sessionToGroupMap.TryGetValue(sessionId, out var group) || !group.GroupId.Equals(deferred.GroupId))
+            {
+                return;
+            }
+
+            lock (group)
+            {
+                // Still the group the Buffer was held back in.
+                if (!_sessionToGroupMap.TryGetValue(sessionId, out var checkGroup) || !checkGroup.GroupId.Equals(group.GroupId))
+                {
+                    return;
+                }
+
+                if (group.State.Equals(GroupStateType.Playing) && !group.IsHotJoining(sessionId) && !group.IsSpectator(sessionId))
+                {
+                    _counters.BufferingRecovered();
+                }
             }
         }
 
@@ -807,7 +833,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     // or no longer interrupts anyone.
                     if (group.State.Equals(GroupStateType.Playing))
                     {
-                        _logger.LogDebug("Session {SessionId} did not recover within the grace period, pausing group {GroupId}.", deferred.Session.Id, group.GroupId.ToString());
+                        _logger.LogDebug("Session {SessionId} did not recover within the grace period; applying its held-back Buffer in group {GroupId}.", deferred.Session.Id, group.GroupId.ToString());
                         group.HandleRequest(deferred.Session, deferred.Request, CancellationToken.None);
 
                         // Counted by outcome: the state machine absorbs a stall
@@ -961,13 +987,12 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// </summary>
         private sealed class DeferredBuffering
         {
-            public DeferredBuffering(SessionInfo session, BufferGroupRequest request, Guid groupId, DateTime applyAt, bool wouldPause)
+            public DeferredBuffering(SessionInfo session, BufferGroupRequest request, Guid groupId, DateTime applyAt)
             {
                 Session = session;
                 Request = request;
                 GroupId = groupId;
                 ApplyAt = applyAt;
-                WouldPause = wouldPause;
             }
 
             public SessionInfo Session { get; }
@@ -977,8 +1002,6 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             public Guid GroupId { get; }
 
             public DateTime ApplyAt { get; }
-
-            public bool WouldPause { get; }
         }
     }
 }

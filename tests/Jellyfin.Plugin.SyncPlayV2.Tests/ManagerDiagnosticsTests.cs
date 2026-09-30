@@ -98,7 +98,7 @@ public sealed class ManagerDiagnosticsTests : IDisposable
         var (_, b, playlistItemId) = StartPlaying();
 
         _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
-        Thread.Sleep(PastTheGrace);
+        WaitUntil(() => _manager.GetDiagnostics().Groups.Single().State == GroupStateType.Waiting);
 
         var report = _manager.GetDiagnostics();
         Assert.Equal(GroupStateType.Waiting, report.Groups.Single().State);
@@ -125,6 +125,44 @@ public sealed class ManagerDiagnosticsTests : IDisposable
         Assert.Equal(GroupStateType.Playing, report.Groups.Single().State);
         Assert.Equal(0, report.Counters.BufferingApplied);
         Assert.Equal(0, report.Counters.BufferingRecovered);
+    }
+
+    [Fact]
+    public void AStallThatBecomesASpectatorsDuringTheGraceIsNotCountedAsSpared()
+    {
+        // Held back while it would still have paused the group; by the Ready
+        // the member is a spectator, whose stall the group never waits for.
+        var (_, b, playlistItemId) = StartPlaying();
+
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        _manager.HandleRequest(b, new IgnoreWaitGroupRequest(true), CancellationToken.None);
+        _manager.HandleRequest(b, new ReadyGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+
+        Assert.Equal(0, _manager.GetDiagnostics().Counters.BufferingRecovered);
+    }
+
+    [Fact]
+    public void AStallThatStopsBeingASpectatorsDuringTheGraceIsCountedAsSpared()
+    {
+        // The other way round: by the Ready the member would pause the group
+        // again, so the grace did spare everyone a pause.
+        var (_, b, playlistItemId) = StartPlaying();
+        _manager.HandleRequest(b, new IgnoreWaitGroupRequest(true), CancellationToken.None);
+
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        _manager.HandleRequest(b, new IgnoreWaitGroupRequest(false), CancellationToken.None);
+        _manager.HandleRequest(b, new ReadyGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+
+        Assert.Equal(1, _manager.GetDiagnostics().Counters.BufferingRecovered);
+    }
+
+    private static void WaitUntil(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow + PastTheGrace;
+        while (!condition() && DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(50);
+        }
     }
 
     private (SessionInfo A, SessionInfo B, Guid PlaylistItemId) StartPlaying()
