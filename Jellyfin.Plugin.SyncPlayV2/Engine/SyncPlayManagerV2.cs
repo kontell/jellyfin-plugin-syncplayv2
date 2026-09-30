@@ -646,9 +646,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             _disposed = true;
         }
 
-        private void OnSessionEnded(object sender, SessionEventArgs e)
+        internal void OnSessionEnded(object sender, SessionEventArgs e)
         {
-            MarkSessionDisconnected(e.SessionInfo);
+            MarkSessionDisconnected(e.SessionInfo, endedInstanceOnly: true);
         }
 
         /// <summary>
@@ -658,29 +658,63 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// </summary>
         /// <param name="session">The session.</param>
         public void MarkSessionDisconnected(SessionInfo session)
+            => MarkSessionDisconnected(session, endedInstanceOnly: false);
+
+        /// <summary>
+        /// Marks the session's member disconnected. With <paramref name="endedInstanceOnly"/>,
+        /// only if the member is still on that session instance: Jellyfin raises
+        /// SessionEnded and SessionControllerConnected on separate threads, so a
+        /// reconnect's new instance can be re-attached before the old instance's
+        /// end arrives, and the member must not be dropped with a live socket.
+        /// </summary>
+        /// <param name="session">The session.</param>
+        /// <param name="endedInstanceOnly">Whether to ignore an instance the member no longer uses.</param>
+        private void MarkSessionDisconnected(SessionInfo session, bool endedInstanceOnly)
         {
-            CancelDeferredBuffering(session.Id);
-
-            if (_sessionToGroupMap.TryGetValue(session.Id, out var group))
+            // A late end must not cancel by id a Buffer it cannot tie to its
+            // instance; the sweep drops one whose session left the group.
+            if (!_sessionToGroupMap.TryGetValue(session.Id, out var group))
             {
-                lock (group)
+                if (!endedInstanceOnly)
                 {
-                    // Make sure that session still belongs to this group.
-                    if (!_sessionToGroupMap.TryGetValue(session.Id, out var checkGroup) || !checkGroup.GroupId.Equals(group.GroupId))
+                    CancelDeferredBuffering(session.Id);
+                }
+
+                return;
+            }
+
+            lock (group)
+            {
+                // Make sure that session still belongs to this group.
+                if (!_sessionToGroupMap.TryGetValue(session.Id, out var checkGroup) || !checkGroup.GroupId.Equals(group.GroupId))
+                {
+                    if (!endedInstanceOnly)
                     {
-                        return;
+                        CancelDeferredBuffering(session.Id);
                     }
 
-                    // A transport death is not a leave: keep the membership for the grace
-                    // window so that the member can resume where it left off on reconnect.
-                    _logger.LogInformation("Session {SessionId} ended, keeping its membership of group {GroupId} for {Grace}.", session.Id, group.GroupId.ToString(), DisconnectedGracePeriod);
-                    group.SetMemberDisconnected(session);
+                    return;
+                }
 
-                    if (group.State.Equals(GroupStateType.Waiting))
-                    {
-                        // Re-evaluate the group wait now that this member is not waited on.
-                        group.HandleRequest(session, new IgnoreWaitGroupRequest(true), CancellationToken.None);
-                    }
+                // Checked before the held-back Buffer is cancelled, under the
+                // group lock: that Buffer may be the new instance's.
+                if (endedInstanceOnly && !ReferenceEquals(group.GetMemberSession(session.Id), session))
+                {
+                    _logger.LogDebug("Session {SessionId} ended an instance group {GroupId} has already replaced; the member stays connected.", session.Id, group.GroupId.ToString());
+                    return;
+                }
+
+                CancelDeferredBuffering(session.Id);
+
+                // A transport death is not a leave: keep the membership for the grace
+                // window so that the member can resume where it left off on reconnect.
+                _logger.LogInformation("Session {SessionId} ended, keeping its membership of group {GroupId} for {Grace}.", session.Id, group.GroupId.ToString(), DisconnectedGracePeriod);
+                group.SetMemberDisconnected(session);
+
+                if (group.State.Equals(GroupStateType.Waiting))
+                {
+                    // Re-evaluate the group wait now that this member is not waited on.
+                    group.HandleRequest(session, new IgnoreWaitGroupRequest(true), CancellationToken.None);
                 }
             }
         }

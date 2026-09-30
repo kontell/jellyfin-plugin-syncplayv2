@@ -306,6 +306,70 @@ public sealed class ManagerDiagnosticsTests : IDisposable
                 && update.Data is GroupStateUpdate { State: GroupStateType.Waiting, Reason: PlaybackRequestType.Buffer });
     }
 
+    [Fact]
+    public void ALateSessionEndedDoesNotDisconnectAReconnectedMember()
+    {
+        // Jellyfin queues SessionEnded and SessionControllerConnected on
+        // separate threads: the reconnect's new instance can be re-attached
+        // before the old instance's end is handled.
+        var (_, b, _) = StartPlaying();
+        var reconnected = new SessionInfo(_sessionManager, NullLogger.Instance)
+        {
+            Id = b.Id,
+            UserId = b.UserId,
+            UserName = b.UserName,
+            DeviceId = b.DeviceId,
+            Client = b.Client,
+            SessionControllers = new ISessionController[] { new RecordingController() },
+        };
+
+        _manager.ReattachSession(reconnected);
+        RaiseSessionEnded(b);
+
+        var member = _manager.GetDiagnostics().Groups.Single().Members.Single(m => m.UserName == "b");
+        Assert.True(member.IsConnected);
+    }
+
+    [Fact]
+    public void ALateSessionEndedDoesNotCancelTheNewInstancesHeldBackBuffer()
+    {
+        // The new instance stalls and its Buffer is held back; the old
+        // instance's end must not cancel it, or the stall is lost.
+        var (_, b, playlistItemId) = StartPlaying();
+        var reconnected = new SessionInfo(_sessionManager, NullLogger.Instance)
+        {
+            Id = b.Id,
+            UserId = b.UserId,
+            UserName = b.UserName,
+            DeviceId = b.DeviceId,
+            Client = b.Client,
+            SessionControllers = new ISessionController[] { new RecordingController() },
+        };
+        _manager.ReattachSession(reconnected);
+        _manager.HandleRequest(reconnected, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        Assert.Equal(1, _manager.HeldBackBufferingCount);
+
+        RaiseSessionEnded(b);
+
+        Assert.Equal(1, _manager.HeldBackBufferingCount);
+        WaitUntil(() => _manager.GetDiagnostics().Groups.Single().State == GroupStateType.Waiting);
+        Assert.Equal(GroupStateType.Waiting, _manager.GetDiagnostics().Groups.Single().State);
+    }
+
+    [Fact]
+    public void ASessionEndedForTheCurrentInstanceStillDisconnects()
+    {
+        var (_, b, _) = StartPlaying();
+
+        RaiseSessionEnded(b);
+
+        var member = _manager.GetDiagnostics().Groups.Single().Members.Single(m => m.UserName == "b");
+        Assert.False(member.IsConnected);
+    }
+
+    private void RaiseSessionEnded(SessionInfo session)
+        => _manager.OnSessionEnded(_sessionManager, new SessionEventArgs { SessionInfo = session });
+
     private int AppliedBuffers(string member)
         => _manager.GetDiagnostics().Groups.Single().History.Count(e => e.Event == "Buffer" && e.Member == member);
 
