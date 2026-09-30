@@ -756,6 +756,21 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             }
         }
 
+        /// <summary>
+        /// Gets how many Buffer reports the grace is holding back, for tests that
+        /// must know the sweep has applied one rather than assume it.
+        /// </summary>
+        internal int HeldBackBufferingCount
+        {
+            get
+            {
+                lock (_deferredBufferingLock)
+                {
+                    return _deferredBuffering.Count;
+                }
+            }
+        }
+
         private DeferredBuffering CancelDeferredBuffering(string sessionId)
         {
             lock (_deferredBufferingLock)

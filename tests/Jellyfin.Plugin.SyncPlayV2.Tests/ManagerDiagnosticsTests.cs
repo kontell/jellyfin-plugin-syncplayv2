@@ -168,7 +168,14 @@ public sealed class ManagerDiagnosticsTests : IDisposable
         _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
         _manager.HandleRequest(b, new ReadyGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
         _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
-        Thread.Sleep(PastTheGrace);
+
+        // Still Playing proves nothing until the sweep has applied the Buffer:
+        // the group records it only then (the first one, cancelled by the
+        // Ready, never reached the group).
+        Assert.Equal(1, _manager.HeldBackBufferingCount);
+        WaitUntil(() => AppliedBuffers("b") == 1);
+        Assert.Equal(1, AppliedBuffers("b"));
+        Assert.Equal(0, _manager.HeldBackBufferingCount);
 
         var report = _manager.GetDiagnostics();
         Assert.Equal(GroupStateType.Playing, report.Groups.Single().State);
@@ -297,6 +304,9 @@ public sealed class ManagerDiagnosticsTests : IDisposable
             update => update.Type == "StateUpdate"
                 && update.Data is GroupStateUpdate { State: GroupStateType.Waiting, Reason: PlaybackRequestType.Buffer });
     }
+
+    private int AppliedBuffers(string member)
+        => _manager.GetDiagnostics().Groups.Single().History.Count(e => e.Event == "Buffer" && e.Member == member);
 
     private static void WaitUntil(Func<bool> condition)
     {
