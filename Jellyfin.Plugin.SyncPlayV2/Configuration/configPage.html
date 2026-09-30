@@ -70,7 +70,7 @@
                         </div>
                     </div>
 
-                    <div class="fieldDescription">Running groups use the new values for every wait, grace and beacon that starts after saving; one already under way finishes on the old value. No restart needed.</div>
+                    <div class="fieldDescription">Running groups apply new wait timeouts and disconnect grace from the next check, about a second after saving, including a wait or disconnect already under way. A buffering grace already counting down, and the wait for the next beacon, keep the value they started with. No restart needed.</div>
                     <br />
                     <button is="emby-button" type="submit" class="raised button-submit block">
                         <span>Save</span>
@@ -335,11 +335,7 @@
                     refreshTimer = null;
                 });
 
-                // The engine raises a load timeout below the stall timeout to
-                // it; saving one would store a value that never applies. The
-                // rule is checked on submit; editing either field clears the
-                // last verdict, since a pending custom error would stop the
-                // browser from submitting the corrected form at all.
+                // Custom validity persists, so a corrected form still fails until it is cleared.
                 ['#LoadTimeoutSeconds', '#StallTimeoutSeconds'].forEach(function (id) {
                     page.querySelector(id).addEventListener('input', function () {
                         page.querySelector('#LoadTimeoutSeconds').setCustomValidity('');
