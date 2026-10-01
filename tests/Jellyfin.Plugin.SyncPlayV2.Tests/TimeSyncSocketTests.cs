@@ -5,6 +5,7 @@ using System.Net.WebSockets;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Data;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Database.Implementations.Enums;
 using Jellyfin.Plugin.SyncPlayV2.Ws;
@@ -93,6 +94,30 @@ public class TimeSyncSocketTests
         await allowed.Accepted.WaitAsync(Bound);
         allowed.Close();
         await allowed.Done.WaitAsync(Bound);
+    }
+
+    [Fact]
+    public async Task AnAdministratorDeniedSyncPlayStillGetsASocket()
+    {
+        // The policy succeeds for an administrator before its SyncPlay
+        // handler is consulted, so Hello admits one; the socket must too.
+        var handler = Handler();
+
+        var admin = Hold(handler, "token-1", "device-1", "admin-none");
+        await admin.Accepted.WaitAsync(Bound);
+        admin.Close();
+        await admin.Done.WaitAsync(Bound);
+    }
+
+    [Fact]
+    public async Task AnApiKeyWithoutAUserGetsASocket()
+    {
+        var handler = Handler();
+
+        var key = Hold(handler, "api-key", "device-1");
+        await key.Accepted.WaitAsync(Bound);
+        key.Close();
+        await key.Done.WaitAsync(Bound);
     }
 
     [Fact]
@@ -217,11 +242,18 @@ public class FakeAuth : DispatchProxy
             Token = request.Query["token"].ToString(),
             DeviceId = request.Query["device"].ToString(),
             Client = "harness",
-            User = access.Length == 0 ? null! : new User("harness-user", "Default", "Default")
-            {
-                SyncPlayAccess = access == "none" ? SyncPlayUserAccessType.None : SyncPlayUserAccessType.JoinGroups,
-            },
+            User = access.Length == 0 ? null! : NewUser(access),
         });
+    }
+
+    private static User NewUser(string access)
+    {
+        var user = new User("harness-user", "Default", "Default")
+        {
+            SyncPlayAccess = access.EndsWith("none", StringComparison.Ordinal) ? SyncPlayUserAccessType.None : SyncPlayUserAccessType.JoinGroups,
+        };
+        user.SetPermission(PermissionKind.IsAdministrator, access.StartsWith("admin", StringComparison.Ordinal));
+        return user;
     }
 }
 
