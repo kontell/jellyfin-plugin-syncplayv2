@@ -107,7 +107,7 @@
                 var openHistories = {};
                 var inFlight = false;
                 var generation = 0;
-                var statusRetrying = false;
+                var statusPending = false;
                 var statusSeq = 0;
 
                 function el(tag, text, style) {
@@ -294,12 +294,10 @@
                         updateCopy();
 
                         // A status that failed to load is retried with the
-                        // diagnostics, so Copy does not stay off for good.
-                        if (!lastStatus && !statusRetrying) {
-                            statusRetrying = true;
-                            loadStatus().then(function () {
-                                statusRetrying = false;
-                            });
+                        // diagnostics, so Copy does not stay off for good; not
+                        // while one is on its way, which a retry would supersede.
+                        if (!lastStatus && !statusPending) {
+                            loadStatus();
                         }
                     }).catch(function () {
                         if (mine === generation) {
@@ -425,6 +423,7 @@
                     var status = page.querySelector('#SyncPlayV2Status');
                     var detail = page.querySelector('#SyncPlayV2StatusDetail');
                     var mine = ++statusSeq;
+                    statusPending = true;
                     return ApiClient.getJSON(ApiClient.getUrl('SyncPlay/V2/Status')).then(function (s) {
                         if (mine !== statusSeq) {
                             return;
@@ -443,10 +442,18 @@
                             + ' s, beacons every ' + t.PositionBeaconSeconds + ' s.';
                     }).catch(function () {
                         if (mine === statusSeq) {
+                            // Timings from an older reply are not the ones in effect.
+                            lastStatus = null;
                             status.textContent = 'Status unavailable.';
                             detail.textContent = '';
                         }
-                    }).then(updateCopy);
+                    }).then(function () {
+                        if (mine === statusSeq) {
+                            statusPending = false;
+                        }
+
+                        updateCopy();
+                    });
                 }
 
                 // Users who may use SyncPlay and have next-episode autoplay on, in
