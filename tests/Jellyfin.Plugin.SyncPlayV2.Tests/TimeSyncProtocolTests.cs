@@ -85,7 +85,7 @@ public class TimeSyncProtocolTests
     [Fact]
     public void TheLimiterCapsConnectionsPerKeyAndFreesThem()
     {
-        var limiter = new ConnectionLimiter(2);
+        var limiter = new ConnectionLimiter(2, int.MaxValue);
 
         Assert.True(limiter.TryEnter("web|device-1"));
         Assert.True(limiter.TryEnter("web|device-1"));
@@ -105,7 +105,7 @@ public class TimeSyncProtocolTests
     [Fact]
     public void TheLimiterHoldsUnderContention()
     {
-        var limiter = new ConnectionLimiter(4);
+        var limiter = new ConnectionLimiter(4, int.MaxValue);
 
         var entered = Enumerable.Range(0, 200)
             .AsParallel()
@@ -115,5 +115,57 @@ public class TimeSyncProtocolTests
 
         Parallel.For(0, 4, _ => limiter.Exit("web|device-1"));
         Assert.Equal(0, limiter.Count("web|device-1"));
+    }
+
+    [Fact]
+    public void TheLimiterCapsTheTotalOverAllKeys()
+    {
+        // Many tokens together are bounded too: a slot refused for the
+        // total is not taken from the key either.
+        var limiter = new ConnectionLimiter(4, 3);
+
+        Assert.True(limiter.TryEnter("a"));
+        Assert.True(limiter.TryEnter("b"));
+        Assert.True(limiter.TryEnter("c"));
+        Assert.False(limiter.TryEnter("d"));
+        Assert.Equal(0, limiter.Count("d"));
+
+        limiter.Exit("b");
+        Assert.True(limiter.TryEnter("d"));
+        Assert.Equal(3, limiter.Total);
+    }
+
+    [Fact]
+    public async Task AKeyAtItsCapDoesNotCrowdOutAnotherKey()
+    {
+        // One slot left in total. Attempts on a key already at its cap, however
+        // many and however concurrent, never take it from another key.
+        var limiter = new ConnectionLimiter(1, 2);
+        Assert.True(limiter.TryEnter("capped"));
+
+        using var stop = new System.Threading.CancellationTokenSource();
+        var spam = Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                Assert.False(limiter.TryEnter("capped"));
+            }
+        })).ToList();
+
+        try
+        {
+            for (var i = 0; i < 20000; i++)
+            {
+                Assert.True(limiter.TryEnter("other"), "refused on attempt " + i);
+                limiter.Exit("other");
+            }
+        }
+        finally
+        {
+            stop.Cancel();
+            await Task.WhenAll(spam);
+        }
+
+        Assert.Equal(1, limiter.Total);
     }
 }
