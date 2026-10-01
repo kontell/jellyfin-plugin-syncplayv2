@@ -83,6 +83,12 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         private bool _itemLoadPending;
 
         /// <summary>
+        /// Whether the last <see cref="AddSession"/> added a member rather than
+        /// re-attaching one, for the hot-join counter (diagnostics).
+        /// </summary>
+        private bool _addedNewMember;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="Group" /> class.
         /// </summary>
         /// <param name="loggerFactory">The logger factory.</param>
@@ -206,11 +212,18 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 // The session re-joined: re-attach it, as the session instance may be a
                 // new one (with the same identifier) if the previous one ended.
                 member.Session = session;
+                if (!member.IsConnected)
+                {
+                    _counters.Reconnect();
+                }
+
                 member.IsConnected = true;
                 member.ProtocolVersion = protocolVersion;
+                _addedNewMember = false;
             }
             else
             {
+                _addedNewMember = true;
                 _participants.Add(
                     session.Id,
                     new GroupMember(session)
@@ -561,7 +574,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <inheritdoc />
         public void BeginHotJoin(SessionInfo session, CancellationToken cancellationToken)
         {
-            if (_participants.ContainsKey(session.Id))
+            // A repeated Join of a member already in the group runs the catch-up
+            // again but is not another member joining.
+            if (_participants.ContainsKey(session.Id) && _addedNewMember)
             {
                 _counters.HotJoin();
             }
