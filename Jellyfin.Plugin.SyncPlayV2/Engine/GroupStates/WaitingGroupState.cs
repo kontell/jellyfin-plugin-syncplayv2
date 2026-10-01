@@ -341,6 +341,24 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 return;
             }
 
+            // A wait already in progress must not start counting a spectator
+            // (VENDORED.md, #14).
+            if (IsSpectatorStall(context, session))
+            {
+                return;
+            }
+
+            // Fix divergence (VENDORED.md, #14): a member the group gave up on
+            // that stalls again before it ever reported ready is reporting again
+            // all the same. Without this the group waits for nobody: IsBuffering()
+            // and the wait-timeout sweep both skip the still-ignored member.
+            // Ahead of the wrong-item check, whose early return would otherwise
+            // leave the member ignored in a Waiting entered for it.
+            if (context is IGroupStateContextV2 restartContext && restartContext.RestartWaitFor(session))
+            {
+                _logger.LogInformation("Session {SessionId} buffered again in group {GroupId} after the group stopped waiting for it; the group waits for it again.", session.Id, context.GroupId.ToString());
+            }
+
             // Make sure the client is playing the correct item.
             if (!request.PlaylistItemId.Equals(context.PlayQueue.GetPlayingItemPlaylistId()))
             {
@@ -352,15 +370,6 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 context.SetBuffering(session, true);
 
                 return;
-            }
-
-            // Fix divergence (VENDORED.md, #14): a member the group gave up on
-            // that stalls again before it ever reported ready is reporting again
-            // all the same. Without this the group waits for nobody: IsBuffering()
-            // and the wait-timeout sweep both skip the still-ignored member.
-            if (context is IGroupStateContextV2 restartContext && restartContext.RestartWaitFor(session))
-            {
-                _logger.LogInformation("Session {SessionId} buffered again in group {GroupId} after the group stopped waiting for it; the group waits for it again.", session.Id, context.GroupId.ToString());
             }
 
             if (prevState.Equals(GroupStateType.Playing))

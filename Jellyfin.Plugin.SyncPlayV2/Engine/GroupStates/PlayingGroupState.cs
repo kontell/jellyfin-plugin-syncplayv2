@@ -134,14 +134,16 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 return;
             }
 
-            if (context is IGroupStateContextV2 v2 && (v2.IsHotJoining(session.Id) || v2.IsSpectator(session.Id)))
+            if (context is IGroupStateContextV2 v2 && v2.IsHotJoining(session.Id))
             {
                 // A hot-joining member's stalls are its own; the group keeps
                 // playing and the member re-reports Ready when it recovers.
-                // Fix divergence (VENDORED.md, #14): so are a spectator's — the
-                // group does not wait for it, so a Waiting entered for its stall
-                // is one nobody can end.
                 context.SetBuffering(session, true);
+                return;
+            }
+
+            if (IsSpectatorStall(context, session))
+            {
                 return;
             }
 

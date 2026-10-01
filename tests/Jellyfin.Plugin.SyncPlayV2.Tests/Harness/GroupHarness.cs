@@ -160,8 +160,16 @@ internal sealed class Member
     public void Ready(long positionTicks = 0, bool isPlaying = false)
         => Send(new ReadyGroupRequest(DateTime.UtcNow, positionTicks, isPlaying, _harness.PlaylistItemId));
 
-    public void Buffer(long positionTicks = 0, bool isPlaying = true)
-        => Send(new BufferGroupRequest(DateTime.UtcNow, positionTicks, isPlaying, _harness.PlaylistItemId));
+    /// <summary>
+    /// Reports a stall. <paramref name="playlistItemId"/> other than the
+    /// group's current entry is a client still on an item the group left.
+    /// </summary>
+    public void Buffer(long positionTicks = 0, bool isPlaying = true, Guid? playlistItemId = null)
+        => Send(new BufferGroupRequest(DateTime.UtcNow, positionTicks, isPlaying, playlistItemId ?? _harness.PlaylistItemId));
+
+    /// <summary>Gets whether the group lists this member as buffering.</summary>
+    public bool IsListedBuffering
+        => _harness.Group.GetWireInfo(false).Members.Single(member => member.UserName == Session.UserName).IsBuffering;
 
     public void Seek(long positionTicks) => Send(new SeekGroupRequest(positionTicks));
 
