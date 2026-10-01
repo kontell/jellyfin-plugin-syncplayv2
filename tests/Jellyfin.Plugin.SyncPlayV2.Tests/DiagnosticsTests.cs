@@ -242,6 +242,27 @@ public class DiagnosticsTests
         Assert.Null(harness.Group.GetDiagnostics().Members.Single().AutoplayNextEpisode);
     }
 
+    [Theory]
+    [InlineData(1, null)]
+    [InlineData(2, "attempt 1")]
+    public void ACorrectionIsNumberedOnlyWhereItCountsTowardsARendezvous(int protocolVersion, string? detail)
+    {
+        // CorrectionAttempts counts only a v2 member's corrections towards a
+        // rendezvous; a v1 member's are never counted.
+        var harness = new GroupHarness();
+        var a = harness.Join("a", protocolVersion);
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+        a.Buffer(Minute, isPlaying: true);
+
+        a.Ready(Minute - TimeSpan.FromSeconds(9).Ticks, isPlaying: false);
+
+        var diagnostics = harness.Group.GetDiagnostics();
+        var correction = Assert.Single(diagnostics.History, e => e.Event == "Position correction");
+        Assert.Equal(detail, correction.Detail);
+        Assert.Equal(protocolVersion == 2 ? 1 : 0, diagnostics.Members.Single(m => m.UserName == "a").CorrectionAttempts);
+    }
+
     [Fact]
     public void TheHistoryExplainsAStallAfterItHasPassed()
     {
@@ -311,11 +332,13 @@ public class DiagnosticsTests
         var b = harness.Join("b", protocolVersion: 2);
         harness.StartPlaying(new[] { a, b }, Minute);
 
-        harness.Group.RendezvousMember(b.Session, "kept the group waiting for over 00:00:10", CancellationToken.None);
+        harness.Group.RendezvousOnWaitTimeout(b.Session, TimeSpan.FromSeconds(30), loading: true, CancellationToken.None);
+        harness.Group.RendezvousOnWaitTimeout(b.Session, TimeSpan.FromSeconds(10), loading: false, CancellationToken.None);
         harness.Group.RendezvousMember(a.Session, "free text from somewhere", CancellationToken.None);
 
+        // Newest first. Both timeouts are configurable: the length is kept.
         var causes = harness.Group.GetDiagnostics().History.Where(e => e.Event == "Rendezvous").Select(e => e.Detail).ToList();
-        Assert.Equal(new[] { "other", "wait timeout" }, causes);
+        Assert.Equal(new[] { "other", "wait timeout, had stalled, 10 s", "wait timeout, was loading, 30 s" }, causes);
         Assert.DoesNotContain(harness.Group.GetDiagnostics().History, e => e.Event == "Joined" && e.Detail != "v2");
     }
 }

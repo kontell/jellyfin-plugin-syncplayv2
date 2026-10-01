@@ -23,7 +23,7 @@ public sealed class GroupHistory
     /// <param name="kind">What happened (a request type or an engine event).</param>
     /// <param name="member">The member it concerns, if any (user name; the report aliases it).</param>
     /// <param name="detail">Numbers and flags only: never a title or a name.</param>
-    /// <param name="state">The group's state after the event.</param>
+    /// <param name="state">The group's state when it is recorded (a request's: the state it arrived in).</param>
     public void Add(DateTime at, string kind, string? member, string? detail, GroupStateType state)
     {
         if (_entries.Count == Capacity)

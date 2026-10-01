@@ -115,7 +115,7 @@ public class GroupEvent
     /// <summary>Gets or sets numbers and flags about it; never a title or a name.</summary>
     public string? Detail { get; set; }
 
-    /// <summary>Gets or sets the group's state after it.</summary>
+    /// <summary>Gets or sets the group's state when it was recorded: a request's is the state it arrived in.</summary>
     public GroupStateType State { get; set; }
 }
 

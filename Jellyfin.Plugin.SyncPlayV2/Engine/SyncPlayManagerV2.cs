@@ -66,15 +66,15 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         private readonly ConcurrentDictionary<Guid, Group> _groups =
             new ConcurrentDictionary<Guid, Group>();
 
+        /// <summary>How many closed groups the diagnostics report keeps.</summary>
+        internal const int ClosedGroupsKept = 3;
+
         /// <summary>
         /// Lock used for accessing multiple groups at once.
         /// </summary>
         /// <remarks>
         /// This lock has priority on locks made on <see cref="Group"/>.
         /// </remarks>
-        /// <summary>How many closed groups the diagnostics report keeps.</summary>
-        internal const int ClosedGroupsKept = 3;
-
         private readonly Lock _groupsLock = new();
 
         /// <summary>
@@ -747,6 +747,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     if (!_deferredBuffering.ContainsKey(session.Id))
                     {
                         _deferredBuffering[session.Id] = new DeferredBuffering(session, request, group.GroupId, DateTime.UtcNow.Add(grace));
+                        group.RecordHeldBackBuffer(session, request);
                         _logger.LogDebug("Session {SessionId} started buffering in group {GroupId}, holding back the report for {Grace}.", session.Id, group.GroupId.ToString(), grace);
                     }
                 }
@@ -933,10 +934,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                             if (group.IsV2Member(session.Id)
                                 && SyncPlayV2Plugin.Instance?.Configuration.HotJoin != false)
                             {
-                                group.RendezvousMember(
-                                    session,
-                                    $"kept the group waiting for over {timeout}",
-                                    CancellationToken.None);
+                                group.RendezvousOnWaitTimeout(session, timeout, load, CancellationToken.None);
                             }
                             else
                             {

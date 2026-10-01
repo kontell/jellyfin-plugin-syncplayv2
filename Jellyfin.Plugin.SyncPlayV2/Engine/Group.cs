@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -650,6 +651,24 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
         /// <inheritdoc />
         public void RendezvousMember(SessionInfo session, string reason, CancellationToken cancellationToken)
+            => Rendezvous(session, reason, RendezvousCause(reason), cancellationToken);
+
+        /// <summary>
+        /// Rendezvouses a member that outlived the group's wait. The history
+        /// records which timeout and how long it was: both are configurable.
+        /// </summary>
+        /// <param name="session">The member's session.</param>
+        /// <param name="timeout">The timeout it outlived.</param>
+        /// <param name="loading">Whether it was loading an item at the group's request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        public void RendezvousOnWaitTimeout(SessionInfo session, TimeSpan timeout, bool loading, CancellationToken cancellationToken)
+            => Rendezvous(
+                session,
+                $"kept the group waiting for over {timeout}",
+                "wait timeout, " + (loading ? "was loading" : "had stalled") + ", " + timeout.TotalSeconds.ToString("0", CultureInfo.InvariantCulture) + " s",
+                cancellationToken);
+
+        private void Rendezvous(SessionInfo session, string reason, string cause, CancellationToken cancellationToken)
         {
             if (!_participants.TryGetValue(session.Id, out GroupMember member))
             {
@@ -672,7 +691,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             // the point — a member that cannot catch up by seeking is in
             // exactly the position of one that has just walked in.
             _counters.Rendezvous();
-            Record("Rendezvous", member.UserName, RendezvousCause(reason));
+            Record("Rendezvous", member.UserName, cause);
             StartCatchUp(session, cancellationToken);
         }
 
@@ -1291,14 +1310,27 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         }
 
         /// <inheritdoc />
-        public void RecordCorrection(SessionInfo session)
+        public void RecordCorrection(SessionInfo session, bool countsTowardsRendezvous)
         {
             _counters.Correction();
             if (_participants.TryGetValue(session.Id, out GroupMember member))
             {
-                Record("Position correction", member.UserName, "attempt " + (member.CorrectionAttempts + 1));
+                // CorrectionAttempts counts only the corrections towards a
+                // rendezvous, and ShouldRendezvous has already counted this one.
+                Record("Position correction", member.UserName, countsTowardsRendezvous ? "attempt " + member.CorrectionAttempts : null);
             }
         }
+
+        /// <summary>
+        /// Records a Buffer the buffering grace holds back: it reaches
+        /// <see cref="HandleRequest"/> only if the grace runs out, so a stall the
+        /// member recovers from would leave no trace before its Ready. Call
+        /// under the group's lock.
+        /// </summary>
+        /// <param name="session">The session that reported the Buffer.</param>
+        /// <param name="request">The Buffer.</param>
+        internal void RecordHeldBackBuffer(SessionInfo session, BufferGroupRequest request)
+            => Record("Buffer held back", _participants.TryGetValue(session.Id, out GroupMember member) ? member.UserName : session.UserName, DescribeRequest(request));
 
         /// <summary>
         /// The group as the diagnostics page shows it: state, position, and for
@@ -1369,7 +1401,6 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             => reason switch
             {
                 _ when reason.StartsWith("corrections", StringComparison.Ordinal) => "corrections not converging",
-                _ when reason.StartsWith("kept the group waiting", StringComparison.Ordinal) => "wait timeout",
                 _ => "other",
             };
 

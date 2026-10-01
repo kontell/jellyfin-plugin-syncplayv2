@@ -125,6 +125,37 @@ public sealed class ManagerDiagnosticsTests : IDisposable
     }
 
     [Fact]
+    public void ARebufferTheGraceSparesIsInTheHistoryBeforeItsReady()
+    {
+        // The held-back Buffer never reaches the group when Ready cancels it.
+        var (_, b, playlistItemId) = StartPlaying();
+
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        _manager.HandleRequest(b, new ReadyGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+
+        var events = _manager.GetDiagnostics().Groups.Single().History
+            .Where(e => e.Member == "b")
+            .Select(e => e.Event)
+            .Take(2)
+            .ToList();
+        Assert.Equal(new[] { "Ready", "Buffer held back" }, events);
+    }
+
+    [Fact]
+    public void ARebufferPastTheGraceIsHeldBackOnceAndAppliedOnce()
+    {
+        var (_, b, playlistItemId) = StartPlaying();
+
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        WaitUntil(() => _manager.GetDiagnostics().Groups.Single().State == GroupStateType.Waiting);
+
+        var history = _manager.GetDiagnostics().Groups.Single().History;
+        Assert.Single(history, e => e.Event == "Buffer held back");
+        Assert.Single(history, e => e.Event == "Buffer");
+    }
+
+    [Fact]
     public void ASpectatorsRebufferIsNeitherAbsorbedNorAppliedByTheGrace()
     {
         // The grace holds back any Buffer while the group plays, but a

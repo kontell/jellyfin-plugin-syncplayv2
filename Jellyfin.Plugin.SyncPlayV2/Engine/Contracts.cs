@@ -50,7 +50,8 @@ public interface IGroupStateContextV2 : IGroupStateContext
     /// Counts a position correction just sent to the member, for diagnostics.
     /// </summary>
     /// <param name="session">The member being corrected.</param>
-    void RecordCorrection(SessionInfo session);
+    /// <param name="countsTowardsRendezvous">Whether <see cref="ShouldRendezvous"/> counted this correction.</param>
+    void RecordCorrection(SessionInfo session, bool countsTowardsRendezvous);
 
     /// <summary>
     /// The group waits again, from now, for a member it had given up on

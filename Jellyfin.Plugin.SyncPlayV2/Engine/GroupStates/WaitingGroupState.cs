@@ -503,10 +503,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     // SyncPlayManagerV2 (the wait-timeout sweep) has always
                     // gated on both this and the HotJoin config; this one is
                     // brought into line with it.
-                    if (context is IGroupStateContextV2 v2
+                    var v2 = context as IGroupStateContextV2;
+                    var countsTowardsRendezvous = v2 is not null
                         && v2.IsV2Member(session.Id)
-                        && SyncPlayV2Plugin.Instance?.Configuration.HotJoin != false
-                        && v2.ShouldRendezvous(session, delayTicks))
+                        && SyncPlayV2Plugin.Instance?.Configuration.HotJoin != false;
+                    if (countsTowardsRendezvous && v2.ShouldRendezvous(session, delayTicks))
                     {
                         v2.RendezvousMember(session, "corrections are not closing the gap", cancellationToken);
                         SendGroupStateUpdate(context, request, session, cancellationToken);
@@ -525,7 +526,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     SendGroupStateUpdate(context, request, session, cancellationToken);
 
                     _logger.LogWarning("Session {SessionId} got lost in time, correcting.", session.Id);
-                    (context as IGroupStateContextV2)?.RecordCorrection(session);
+                    v2?.RecordCorrection(session, countsTowardsRendezvous);
                     return;
                 }
 
@@ -593,7 +594,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     SendGroupStateUpdate(context, request, session, cancellationToken);
 
                     _logger.LogWarning("Session {SessionId} is seeking to wrong position, correcting.", session.Id);
-                    (context as IGroupStateContextV2)?.RecordCorrection(session);
+                    (context as IGroupStateContextV2)?.RecordCorrection(session, false);
                     return;
                 }
 
