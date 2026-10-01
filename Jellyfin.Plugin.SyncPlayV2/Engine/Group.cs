@@ -221,6 +221,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 // new one (with the same identifier) if the previous one ended.
                 member.Session = session;
                 member.UserId = session.UserId;
+                member.UserName = session.UserName;
                 if (!member.IsConnected)
                 {
                     _counters.Reconnect();

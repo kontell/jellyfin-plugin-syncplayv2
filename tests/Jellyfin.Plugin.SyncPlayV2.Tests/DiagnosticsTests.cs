@@ -282,10 +282,13 @@ public class DiagnosticsTests
         var harness = new GroupHarness();
         var a = harness.Join("a");
         a.Session.UserId = Guid.NewGuid();
+        a.Session.UserName = "other";
 
         harness.Group.SessionJoin(a.Session, new JoinGroupRequest(harness.Group.GroupId), CancellationToken.None);
 
-        Assert.False(harness.Group.GetDiagnostics().Members.Single().ExternalContent);
+        var member = harness.Group.GetDiagnostics().Members.Single();
+        Assert.False(member.ExternalContent);
+        Assert.Equal("other", member.UserName);
     }
 
     [Fact]
