@@ -264,6 +264,31 @@ public class DiagnosticsTests
     }
 
     [Fact]
+    public void AMembersCapabilityIsReadByTheUserItJoinedAs()
+    {
+        // On Jellyfin 10.11 one SessionInfo serves every user of an app and
+        // device, and its UserId is whoever made the last request.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+
+        a.Session.UserId = Guid.NewGuid();
+
+        Assert.True(harness.Group.GetDiagnostics().Members.Single().ExternalContent);
+    }
+
+    [Fact]
+    public void AJoinAgainTakesTheUserItJoinsAs()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        a.Session.UserId = Guid.NewGuid();
+
+        harness.Group.SessionJoin(a.Session, new JoinGroupRequest(harness.Group.GroupId), CancellationToken.None);
+
+        Assert.False(harness.Group.GetDiagnostics().Members.Single().ExternalContent);
+    }
+
+    [Fact]
     public void TheHistoryExplainsAStallAfterItHasPassed()
     {
         // The panel shows the present; by the time an admin opens it the

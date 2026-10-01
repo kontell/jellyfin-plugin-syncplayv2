@@ -220,6 +220,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 // The session re-joined: re-attach it, as the session instance may be a
                 // new one (with the same identifier) if the previous one ended.
                 member.Session = session;
+                member.UserId = session.UserId;
                 if (!member.IsConnected)
                 {
                     _counters.Reconnect();
@@ -574,7 +575,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// </summary>
         private bool SeesExternalContent(string sessionId)
             => _participants.TryGetValue(sessionId, out GroupMember member)
-                && _versions.HasExternalContent(member.Session);
+                && MemberSeesExternalContent(member);
 
         /// <summary>
         /// Whether every member's device declared the external-content
@@ -583,7 +584,17 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// Feature divergence (VENDORED.md, plan G3.4).
         /// </summary>
         private bool AllMembersSeeExternalContent()
-            => _participants.Values.All(member => _versions.HasExternalContent(member.Session));
+            => _participants.Values.All(MemberSeesExternalContent);
+
+        /// <summary>
+        /// Whether a member declared the external-content capability, looked up
+        /// by the user it joined as. On Jellyfin 10.11 one SessionInfo serves
+        /// every user of an app and device, and its UserId is whoever made the
+        /// last request. Feature divergence (VENDORED.md, plan G3.4).
+        /// </summary>
+        private bool MemberSeesExternalContent(GroupMember member)
+            => member.Session is not null
+                && _versions.HasExternalContent(member.Session.Client, member.Session.DeviceId, member.UserId);
 
         /// <summary>
         /// Gets a member's current session: a reconnect can replace the instance
@@ -1382,7 +1393,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     UserId = member.UserId,
                     DeviceName = member.Session?.DeviceName,
                     ProtocolVersion = member.ProtocolVersion,
-                    ExternalContent = member.Session is not null && _versions.HasExternalContent(member.Session),
+                    ExternalContent = MemberSeesExternalContent(member),
                     Ping = member.Ping,
                     IsConnected = member.IsConnected,
                     DisconnectedSeconds = member.IsConnected ? null : Math.Round((now - member.DisconnectedSince).TotalSeconds, 1),

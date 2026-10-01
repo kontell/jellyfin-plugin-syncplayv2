@@ -68,7 +68,8 @@ public class ProtocolVersionRegistry
         // speaks v2 to this server; a 0 or a negative is a v1 client.
         _entries[Key(client, deviceId, userId)] = (Math.Clamp(version, 1, ServerVersion), externalContent, DateTime.UtcNow);
 
-        // Opportunistic sweep; the registry stays tiny (one entry per device).
+        // Opportunistic sweep; the registry stays tiny (one entry per client,
+        // device and user).
         if (_entries.Count > 4096)
         {
             var cutoff = DateTime.UtcNow - Ttl;
