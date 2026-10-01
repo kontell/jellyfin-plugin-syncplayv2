@@ -107,6 +107,63 @@ public class SocketLivenessTests
     }
 
     [Fact]
+    public void AZombieIsReportedOnceTheLiveSocketBesideItCloses()
+    {
+        // A reconnect leaves the old socket open but quiet. While the new one
+        // lives the session does; once it closes, only the zombie is left.
+        var liveness = Liveness();
+        Session("web", Web, "device-1", Alice);
+        Connect(liveness, Web, "device-1", Alice);
+        Advance(TimeSpan.FromSeconds(30));
+        var fresh = Connect(liveness, Web, "device-1", Alice);
+        Advance(TimeSpan.FromSeconds(31));
+        fresh.KeepAlive(_now);
+        liveness.Sweep();
+        Assert.Empty(_disconnected);
+
+        fresh.Close();
+        liveness.Sweep();
+        liveness.Sweep();
+
+        Assert.Equal(new[] { "web" }, _disconnected);
+    }
+
+    [Fact]
+    public void ANewSocketReattachesADeadSessionOnce()
+    {
+        // The new socket re-attaches it at once (Jellyfin's own re-attach may
+        // have run before the dead report); the sweep does not do it again.
+        var liveness = Liveness();
+        Session("web", Web, "device-1", Alice);
+        Connect(liveness, Web, "device-1", Alice);
+        Advance(TimeSpan.FromSeconds(61));
+        liveness.Sweep();
+        Assert.Equal(new[] { "web" }, _disconnected);
+
+        Connect(liveness, Web, "device-1", Alice);
+        liveness.Sweep();
+
+        Assert.Equal(new[] { "web" }, _reattached);
+    }
+
+    [Fact]
+    public void ASocketDeadForLongIsNoLongerWatched()
+    {
+        var liveness = Liveness();
+        Session("web", Web, "device-1", Alice);
+        Connect(liveness, Web, "device-1", Alice);
+        Advance(TimeSpan.FromSeconds(61));
+        liveness.Sweep();
+        Assert.Equal(1, liveness.WatchedSockets);
+
+        Advance(TimeSpan.FromMinutes(10));
+        liveness.Sweep();
+
+        Assert.Equal(0, liveness.WatchedSockets);
+        Assert.Equal(new[] { "web" }, _disconnected);
+    }
+
+    [Fact]
     public void ASocketThatCannotBeTiedToOneSessionIsNotWatched()
     {
         // With no client to go by, "every session of the device" is the only
@@ -202,6 +259,7 @@ public class FakeSocket : DispatchProxy
 {
     private AuthorizationInfo _auth = new();
     private DateTime _lastActivity;
+    private WebSocketState _state = WebSocketState.Open;
 
     /// <summary>Gets how many handlers subscribed to Closed: 1 when watched.</summary>
     public int ClosedSubscriptions { get; private set; }
@@ -216,6 +274,8 @@ public class FakeSocket : DispatchProxy
 
     public void KeepAlive(DateTime at) => _lastActivity = at;
 
+    public void Close() => _state = WebSocketState.Closed;
+
     private object? Subscribed()
     {
         ClosedSubscriptions++;
@@ -226,7 +286,7 @@ public class FakeSocket : DispatchProxy
         => targetMethod!.Name switch
         {
             "get_AuthorizationInfo" => _auth,
-            "get_State" => WebSocketState.Open,
+            "get_State" => _state,
             "get_LastActivityDate" => _lastActivity,
             "get_LastKeepAliveDate" => _lastActivity,
             "add_Closed" => Subscribed(),
