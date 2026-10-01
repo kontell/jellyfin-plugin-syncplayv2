@@ -26,9 +26,9 @@ public class PluginConfiguration : BasePluginConfiguration
 
     /// <summary>
     /// Gets or sets how long, in seconds, the group waits for a member to
-    /// load when everyone is loading: a new item, a seek, a join. Loading
-    /// can mean starting a transcode, which routinely takes longer than a
-    /// rebuffer does.
+    /// load an item: a new item, a restart, a classic join. Loading can
+    /// mean starting a transcode, which routinely takes longer than a
+    /// rebuffer does. A seek within the loaded item keeps the stall timeout.
     /// </summary>
     public int LoadTimeoutSeconds { get; set; } = EngineTimings.DefaultLoadTimeoutSeconds;
 

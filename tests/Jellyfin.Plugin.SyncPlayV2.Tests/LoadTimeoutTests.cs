@@ -113,4 +113,57 @@ public class LoadTimeoutTests
         Assert.Empty(harness.Group.GetStalledMembers(Stall, Load));
         Assert.Contains(harness.Group.GetStalledMembers(Stall, Stall), stalled => stalled.Session.Id == b.Session.Id);
     }
+
+    [Fact]
+    public void AJoinerThatNeverLoadsTimesOutOnTheLoadTimeout()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        harness.StartPlaying(new[] { a }, Minute);
+
+        var b = harness.Join("b");
+        Thread.Sleep(Load + TimeSpan.FromMilliseconds(100));
+
+        var stalled = Assert.Single(harness.Group.GetStalledMembers(Stall, Load));
+        Assert.Equal(b.Session.Id, stalled.Session.Id);
+        Assert.Equal(Load, stalled.Timeout);
+    }
+
+    [Fact]
+    public void TheNextItemIsALoad()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlayingTwoItems(new[] { a, b });
+
+        a.NextItem();
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        a.Ready();
+        Thread.Sleep(PastStall);
+
+        Assert.Empty(harness.Group.GetStalledMembers(Stall, Load));
+    }
+
+    [Fact]
+    public void RemovingThePlayingEntryDoesNotMakeTheNextSeekALoad()
+    {
+        // Removing the playing entry moves the queue to the next one without
+        // a group-wide wait, so the load mark it sets was never consumed and
+        // the next wait — a Seek's, deliberately on the stall timeout — got
+        // the load timeout instead.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlayingTwoItems(new[] { a, b });
+
+        a.RemovePlayingEntry();
+        a.Seek(Minute);
+        a.Ready(Minute);
+        Thread.Sleep(PastStall);
+
+        var stalled = Assert.Single(harness.Group.GetStalledMembers(Stall, Load));
+        Assert.Equal(b.Session.Id, stalled.Session.Id);
+        Assert.Equal(Stall, stalled.Timeout);
+    }
 }

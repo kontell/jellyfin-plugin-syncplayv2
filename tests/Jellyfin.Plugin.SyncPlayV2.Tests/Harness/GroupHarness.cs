@@ -61,6 +61,9 @@ internal sealed class GroupHarness
     /// <summary>Gets the queue entry every scenario plays.</summary>
     public Guid Item { get; } = Guid.NewGuid();
 
+    /// <summary>Gets the second queue entry, for scenarios that change items.</summary>
+    public Guid SecondItem { get; } = Guid.NewGuid();
+
     public Guid PlaylistItemId => Group.PlayQueue.GetPlayingItemPlaylistId();
 
     public GroupStateType State => Group.State;
@@ -103,6 +106,28 @@ internal sealed class GroupHarness
         Assert.True(ContentDescriptor.TryCreate("harness", "item", "Item", runTimeTicks, null, out var descriptor));
         Group.Content.Register(new Dictionary<Guid, ContentDescriptor> { [Item] = descriptor! });
         Group.HandleRequest(by.Session, new PlayGroupRequest(new[] { Item }, 0, 0), CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Queues <see cref="Item"/> then <see cref="SecondItem"/>, plays the
+    /// first and brings every member to Playing, then forgets what was sent.
+    /// </summary>
+    public void StartPlayingTwoItems(IReadOnlyList<Member> members)
+    {
+        Assert.True(ContentDescriptor.TryCreate("harness", "item", "Item", TimeSpan.TicksPerHour, null, out var first));
+        Assert.True(ContentDescriptor.TryCreate("harness", "second", "Second", TimeSpan.TicksPerHour, null, out var second));
+        Group.Content.Register(new Dictionary<Guid, ContentDescriptor> { [Item] = first!, [SecondItem] = second! });
+        Group.HandleRequest(members[0].Session, new PlayGroupRequest(new[] { Item, SecondItem }, 0, 0), CancellationToken.None);
+        foreach (var member in members)
+        {
+            member.Ready();
+        }
+
+        Assert.Equal(GroupStateType.Playing, State);
+        foreach (var member in members)
+        {
+            member.Forget();
+        }
     }
 
     /// <summary>
@@ -180,6 +205,12 @@ internal sealed class Member
     public void Unpause() => Send(new UnpauseGroupRequest());
 
     public void Stop() => Send(new StopGroupRequest());
+
+    public void NextItem() => Send(new NextItemGroupRequest(_harness.PlaylistItemId));
+
+    /// <summary>Removes the group's playing entry from the queue.</summary>
+    public void RemovePlayingEntry()
+        => Send(new RemoveFromPlaylistGroupRequest(new[] { _harness.PlaylistItemId }, false, false));
 
     /// <summary>
     /// The wire's SetIgnoreWait, attributed to the member the way
