@@ -1310,7 +1310,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     UserName = member.UserName ?? string.Empty,
                     Client = member.Session?.Client,
                     ClientVersion = member.Session?.ApplicationVersion,
-                    AutoplayNextEpisode = _userManager.GetUserById(member.UserId)?.EnableNextEpisodeAutoPlay,
+                    UserId = member.UserId,
                     DeviceName = member.Session?.DeviceName,
                     ProtocolVersion = member.ProtocolVersion,
                     ExternalContent = member.Session is not null && _versions.HasExternalContent(member.Session),

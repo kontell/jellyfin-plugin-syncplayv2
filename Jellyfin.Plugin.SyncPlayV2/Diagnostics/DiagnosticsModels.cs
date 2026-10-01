@@ -97,6 +97,12 @@ public class MemberDiagnostics
     /// </summary>
     public bool? AutoplayNextEpisode { get; set; }
 
+    /// <summary>
+    /// Gets or sets the member's user, for reading <see cref="AutoplayNextEpisode"/>
+    /// once the group's lock is released. Not in the report.
+    /// </summary>
+    internal Guid UserId { get; set; }
+
     /// <summary>Gets or sets the device name.</summary>
     public string? DeviceName { get; set; }
 

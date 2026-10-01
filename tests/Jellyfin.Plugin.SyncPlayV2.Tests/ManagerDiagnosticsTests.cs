@@ -76,6 +76,23 @@ public sealed class ManagerDiagnosticsTests : IDisposable
     }
 
     [Fact]
+    public void TheReportReadsEachMembersAutoplay()
+    {
+        using var manager = new SyncPlayManagerV2(
+            NullLoggerFactory.Instance,
+            UserDirectory.Create(true),
+            _sessionManager,
+            NullService<ILibraryManager>.Create(),
+            new Sender(NullLogger<Sender>.Instance),
+            _versions,
+            _counters);
+        var (a, _) = Session("a");
+        manager.NewGroup(a, new NewGroupRequest("autoplay"), CancellationToken.None);
+
+        Assert.True(manager.GetDiagnostics().Groups.Single().Members.Single().AutoplayNextEpisode);
+    }
+
+    [Fact]
     public void TheReportCarriesTheCountersAndEveryGroup()
     {
         var (a, _) = Session("a");
@@ -87,7 +104,7 @@ public sealed class ManagerDiagnosticsTests : IDisposable
 
         Assert.Equal(new[] { "one", "two" }, report.Groups.Select(g => g.GroupName).OrderBy(n => n));
         Assert.Equal(_counters.Since, report.Counters.Since);
-        Assert.Equal(typeof(ISessionManager).Assembly.GetName().Version?.ToString(), report.ServerVersion);
+        Assert.Equal(typeof(ISessionManager).Assembly.GetName().Version?.ToString(3), report.ServerVersion);
     }
 
     // The shipped grace (2 s) plus the sweep's 1 s period and some slack.

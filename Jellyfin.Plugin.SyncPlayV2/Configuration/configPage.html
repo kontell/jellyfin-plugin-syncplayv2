@@ -382,11 +382,20 @@
                 // a dropdown (a list would grow with the users) and turned off one
                 // at a time through the same user-configuration endpoint Jellyfin
                 // Web's playback settings use.
+                // A reply older than the latest request must not rebuild the list:
+                // it would show a user the button has just turned off.
+                var autoplaySeq = 0;
+
                 function loadAutoplay() {
+                    var mine = ++autoplaySeq;
                     var summary = page.querySelector('#SyncPlayV2AutoplaySummary');
                     var picker = page.querySelector('#SyncPlayV2AutoplayPicker');
                     var select = page.querySelector('#SyncPlayV2AutoplayUser');
                     return ApiClient.getUsers().then(function (users) {
+                        if (mine !== autoplaySeq) {
+                            return;
+                        }
+
                         var affected = users.filter(function (u) {
                             return u.Configuration && u.Configuration.EnableNextEpisodeAutoPlay
                                 && !(u.Policy && u.Policy.SyncPlayAccess === 'None');
@@ -402,6 +411,10 @@
                             ? affected.length + (affected.length === 1 ? ' user' : ' users') + ' with SyncPlay access ' + (affected.length === 1 ? 'has' : 'have') + ' it on.'
                             : 'No user with SyncPlay access has it on.';
                     }).catch(function () {
+                        if (mine !== autoplaySeq) {
+                            return;
+                        }
+
                         picker.style.display = 'none';
                         summary.textContent = 'Could not read the users.';
                     });
@@ -449,6 +462,7 @@
                         Dashboard.hideLoadingMsg();
                     }).catch(fail('load'));
                     loadStatus();
+                    page.querySelector('#SyncPlayV2AutoplayDone').textContent = '';
                     loadAutoplay();
                     visible = true;
                     if (refreshTimer) {
