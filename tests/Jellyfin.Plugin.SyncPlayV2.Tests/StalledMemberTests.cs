@@ -146,6 +146,10 @@ public class StalledMemberTests
         Assert.Contains(a.Commands, command => command.Command == "Pause");
         Assert.DoesNotContain(b.Commands, command => command.Command == "Pause");
 
+        // Jellyfin Web shows the wait only from the state update.
+        Assert.Contains(a.Updates, update => update.Type == "StateUpdate"
+            && update.Data is GroupStateUpdate { State: GroupStateType.Waiting, Reason: PlaybackRequestType.Buffer });
+
         a.Forget();
         b.Ready(Minute, isPlaying: false);
 

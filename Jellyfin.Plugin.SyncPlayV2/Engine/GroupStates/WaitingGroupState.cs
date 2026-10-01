@@ -373,6 +373,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 if (prevState.Equals(GroupStateType.Playing))
                 {
                     PauseGroupForStall(context, session, cancellationToken);
+
+                    // Jellyfin Web shows the wait only from this update; the
+                    // Pause alone stops the players without saying why.
+                    SendGroupStateUpdate(context, request, session, cancellationToken);
                 }
 
                 var playQueueUpdate = context.GetPlayQueueUpdate(PlayQueueUpdateReason.SetCurrentItem);
