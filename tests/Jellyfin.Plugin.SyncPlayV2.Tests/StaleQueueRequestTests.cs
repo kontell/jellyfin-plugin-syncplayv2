@@ -157,6 +157,38 @@ public class StaleQueueRequestTests
     }
 
     [Fact]
+    public void ANextPastTheLastItemWhileAPausedGroupWaitsKeepsItPaused()
+    {
+        // A Buffer from Paused waits to return to Paused; a step with nowhere
+        // to go must not turn that wait into a resume.
+        var (harness, a, b) = PausedWait();
+
+        a.NextItem();
+
+        AssertEndsPaused(harness, a, b);
+    }
+
+    [Fact]
+    public void APreviousBeforeTheFirstItemWhileAPausedGroupWaitsKeepsItPaused()
+    {
+        var (harness, a, b) = PausedWait();
+
+        a.PreviousItem(harness.PlaylistItemId);
+
+        AssertEndsPaused(harness, a, b);
+    }
+
+    [Fact]
+    public void AStaleNextWhileAPausedGroupWaitsKeepsItPaused()
+    {
+        var (harness, a, b) = PausedWait();
+
+        a.NextItem(Guid.NewGuid());
+
+        AssertEndsPaused(harness, a, b);
+    }
+
+    [Fact]
     public void ACurrentNextStillMovesTheGroup()
     {
         var harness = new GroupHarness();
@@ -169,5 +201,28 @@ public class StaleQueueRequestTests
 
         Assert.Equal(GroupStateType.Waiting, harness.State);
         Assert.NotEqual(first, harness.PlaylistItemId);
+    }
+
+    private static (GroupHarness Harness, Member A, Member B) PausedWait()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b });
+        a.Pause();
+        b.Buffer(isPlaying: false);
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        a.Forget();
+        b.Forget();
+        return (harness, a, b);
+    }
+
+    private static void AssertEndsPaused(GroupHarness harness, Member a, Member b)
+    {
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        b.Ready();
+        Assert.Equal(GroupStateType.Paused, harness.State);
+        Assert.DoesNotContain(a.Commands, command => command.Command == "Unpause");
+        Assert.DoesNotContain(b.Commands, command => command.Command == "Unpause");
     }
 }

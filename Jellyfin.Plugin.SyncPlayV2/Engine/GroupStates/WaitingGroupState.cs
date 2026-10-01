@@ -704,8 +704,6 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 InitialStateSet = true;
             }
 
-            ResumePlaying = true;
-
             // Make sure the client knows the playing item, to avoid duplicate requests.
             if (!request.PlaylistItemId.Equals(context.PlayQueue.GetPlayingItemPlaylistId()))
             {
@@ -716,6 +714,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
             var newItem = context.NextItemInQueue();
             if (newItem)
             {
+                // Fix divergence (VENDORED.md): only a step that changes the item
+                // resumes; one that stays in this wait leaves a paused wait paused.
+                ResumePlaying = true;
+
                 // Send playing-queue update.
                 var playQueueUpdate = context.GetPlayQueueUpdate(PlayQueueUpdateReason.NextItem);
                 var update = new SyncPlayPlayQueueUpdate(context.GroupId, playQueueUpdate);
@@ -757,8 +759,6 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 InitialStateSet = true;
             }
 
-            ResumePlaying = true;
-
             // Make sure the client knows the playing item, to avoid duplicate requests.
             if (!request.PlaylistItemId.Equals(context.PlayQueue.GetPlayingItemPlaylistId()))
             {
@@ -769,6 +769,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
             var newItem = context.PreviousItemInQueue();
             if (newItem)
             {
+                // Fix divergence (VENDORED.md): only a step that changes the item
+                // resumes; one that stays in this wait leaves a paused wait paused.
+                ResumePlaying = true;
+
                 // Send playing-queue update.
                 var playQueueUpdate = context.GetPlayQueueUpdate(PlayQueueUpdateReason.PreviousItem);
                 var update = new SyncPlayPlayQueueUpdate(context.GroupId, playQueueUpdate);
