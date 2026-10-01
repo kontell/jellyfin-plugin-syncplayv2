@@ -171,8 +171,9 @@ public sealed class ManagerDiagnosticsTests : IDisposable
 
         // Still Playing proves nothing until the sweep has applied the Buffer:
         // the group records it only then (the first one, cancelled by the
-        // Ready, never reached the group).
-        Assert.Equal(1, _manager.HeldBackBufferingCount);
+        // Ready, never reached the group). Both were held back; the history
+        // keeps that, where the held-back count can already have expired.
+        Assert.Equal(2, _manager.GetDiagnostics().Groups.Single().History.Count(e => e.Event == "Buffer held back" && e.Member == "b"));
         WaitUntil(() => AppliedBuffers("b") == 1);
         Assert.Equal(1, AppliedBuffers("b"));
         Assert.Equal(0, _manager.HeldBackBufferingCount);
