@@ -671,15 +671,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <param name="endedInstanceOnly">Whether to ignore an instance the member no longer uses.</param>
         private void MarkSessionDisconnected(SessionInfo session, bool endedInstanceOnly)
         {
-            // A late end must not cancel by id a Buffer it cannot tie to its
-            // instance; the sweep drops one whose session left the group.
             if (!_sessionToGroupMap.TryGetValue(session.Id, out var group))
             {
-                if (!endedInstanceOnly)
-                {
-                    CancelDeferredBuffering(session.Id);
-                }
-
+                CancelNonMemberDeferredBuffering(session, endedInstanceOnly);
                 return;
             }
 
@@ -688,11 +682,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 // Make sure that session still belongs to this group.
                 if (!_sessionToGroupMap.TryGetValue(session.Id, out var checkGroup) || !checkGroup.GroupId.Equals(group.GroupId))
                 {
-                    if (!endedInstanceOnly)
-                    {
-                        CancelDeferredBuffering(session.Id);
-                    }
-
+                    CancelNonMemberDeferredBuffering(session, endedInstanceOnly);
                     return;
                 }
 
@@ -715,6 +705,32 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 {
                     // Re-evaluate the group wait now that this member is not waited on.
                     group.HandleRequest(session, new IgnoreWaitGroupRequest(true), CancellationToken.None);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Cancels the held-back Buffer of a session that is not a member of a
+        /// group. A late end cancels only one its own instance reported: a
+        /// replacement instance's Buffer is left to its grace. The sweep drops
+        /// a Buffer whose session is in no group or another one, but not one
+        /// whose session has joined the same group again.
+        /// </summary>
+        /// <param name="session">The session.</param>
+        /// <param name="endedInstanceOnly">Whether only this instance's Buffer is cancelled.</param>
+        private void CancelNonMemberDeferredBuffering(SessionInfo session, bool endedInstanceOnly)
+        {
+            if (!endedInstanceOnly)
+            {
+                CancelDeferredBuffering(session.Id);
+                return;
+            }
+
+            lock (_deferredBufferingLock)
+            {
+                if (_deferredBuffering.TryGetValue(session.Id, out var deferred) && ReferenceEquals(deferred.Session, session))
+                {
+                    _deferredBuffering.Remove(session.Id);
                 }
             }
         }

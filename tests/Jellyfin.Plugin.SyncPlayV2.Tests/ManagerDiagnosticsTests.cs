@@ -357,6 +357,43 @@ public sealed class ManagerDiagnosticsTests : IDisposable
     }
 
     [Fact]
+    public void ALateEndOfALeaverCancelsTheBufferItHeldBack()
+    {
+        // Left in the grace, the Buffer from before the leave would be applied
+        // if the session joined the same group again while it plays.
+        var (_, b, playlistItemId) = StartPlaying();
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        Assert.Equal(1, _manager.HeldBackBufferingCount);
+        _manager.LeaveGroup(b, new LeaveGroupRequest(), CancellationToken.None);
+
+        RaiseSessionEnded(b);
+
+        Assert.Equal(0, _manager.HeldBackBufferingCount);
+    }
+
+    [Fact]
+    public void ALateEndOfALeaverLeavesAReplacementInstancesBuffer()
+    {
+        var (_, b, playlistItemId) = StartPlaying();
+        var reconnected = new SessionInfo(_sessionManager, NullLogger.Instance)
+        {
+            Id = b.Id,
+            UserId = b.UserId,
+            UserName = b.UserName,
+            DeviceId = b.DeviceId,
+            Client = b.Client,
+            SessionControllers = new ISessionController[] { new RecordingController() },
+        };
+        _manager.ReattachSession(reconnected);
+        _manager.HandleRequest(reconnected, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        _manager.LeaveGroup(reconnected, new LeaveGroupRequest(), CancellationToken.None);
+
+        RaiseSessionEnded(b);
+
+        Assert.Equal(1, _manager.HeldBackBufferingCount);
+    }
+
+    [Fact]
     public void ASessionEndedForTheCurrentInstanceStillDisconnects()
     {
         var (_, b, _) = StartPlaying();
