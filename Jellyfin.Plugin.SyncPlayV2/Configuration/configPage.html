@@ -424,6 +424,9 @@
                     var detail = page.querySelector('#SyncPlayV2StatusDetail');
                     var mine = ++statusSeq;
                     statusPending = true;
+                    // Until the latest status is in, the timings in effect are unknown.
+                    lastStatus = null;
+                    updateCopy();
                     return ApiClient.getJSON(ApiClient.getUrl('SyncPlay/V2/Status')).then(function (s) {
                         if (mine !== statusSeq) {
                             return;
