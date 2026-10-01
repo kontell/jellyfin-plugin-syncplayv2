@@ -21,7 +21,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine;
 /// the disconnect grace never engages. A plugin cannot abort the socket, but
 /// it CAN observe every connection via IWebSocketListener and drive the
 /// engine's member-level state directly: mark the member disconnected when
-/// its device has no live socket, and re-attach it when keep-alives resume on
+/// its session has no live socket, and re-attach it when keep-alives resume on
 /// the same socket (a NEW socket re-attaches via SessionControllerConnected
 /// as usual). The dead core session lingers — that hygiene needs the upstream
 /// fix — but group behavior matches the integrated build.
@@ -31,34 +31,65 @@ public class SocketLiveness : IWebSocketListener, IDisposable
     private static readonly TimeSpan LostTimeout = TimeSpan.FromSeconds(60);
 
     private readonly ISessionManager _sessionManager;
-    private readonly SyncPlayManagerV2 _engine;
+    private readonly Action<SessionInfo> _markDisconnected;
+    private readonly Action<SessionInfo> _reattach;
     private readonly ILogger<SocketLiveness> _logger;
+    private readonly Func<DateTime> _now;
     private readonly EngineCounters _counters;
     private readonly ConcurrentDictionary<IWebSocketConnection, Entry> _sockets = new();
-    private readonly Timer _timer;
+    private readonly Timer? _timer;
     private int _sweeping;
 
     public SocketLiveness(ISessionManager sessionManager, SyncPlayManagerV2 engine, ILogger<SocketLiveness> logger, EngineCounters counters)
+        : this(sessionManager, engine.MarkSessionDisconnected, engine.ReattachSession, logger, () => DateTime.UtcNow, startTimer: true, counters)
     {
-        _counters = counters;
-        _sessionManager = sessionManager;
-        _engine = engine;
-        _logger = logger;
-        _timer = new Timer(_ => Sweep(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
     }
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="SocketLiveness"/> class
+    /// with its effects, clock and timer supplied: tests drive
+    /// <see cref="Sweep"/> themselves against a clock they move.
+    /// </summary>
+    internal SocketLiveness(
+        ISessionManager sessionManager,
+        Action<SessionInfo> markDisconnected,
+        Action<SessionInfo> reattach,
+        ILogger<SocketLiveness> logger,
+        Func<DateTime> now,
+        bool startTimer,
+        EngineCounters? counters = null)
+    {
+        _counters = counters ?? new EngineCounters();
+        _sessionManager = sessionManager;
+        _markDisconnected = markDisconnected;
+        _reattach = reattach;
+        _logger = logger;
+        _now = now;
+        if (startTimer)
+        {
+            _timer = new Timer(_ => Sweep(), null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+        }
+    }
+
+    /// <summary>
+    /// What a socket is known by, the same three values a Jellyfin 12
+    /// session is keyed by: client, device id and user.
+    /// </summary>
     private sealed class Entry
     {
-        public Entry(string? client, string deviceId)
+        public Entry(string client, string deviceId, Guid userId, DateTime connectedAt)
         {
             Client = client;
             DeviceId = deviceId;
-            ConnectedAt = DateTime.UtcNow;
+            UserId = userId;
+            ConnectedAt = connectedAt;
         }
 
-        public string? Client { get; }
+        public string Client { get; }
 
         public string DeviceId { get; }
+
+        public Guid UserId { get; }
 
         public DateTime ConnectedAt { get; }
 
@@ -71,17 +102,21 @@ public class SocketLiveness : IWebSocketListener, IDisposable
     /// <inheritdoc />
     public Task ProcessWebSocketConnectedAsync(IWebSocketConnection connection, HttpContext httpContext)
     {
-        var deviceId = connection.AuthorizationInfo?.DeviceId;
-        if (!string.IsNullOrEmpty(deviceId))
+        // A socket that cannot be tied to one session is not watched: marking
+        // "every session of the device" dead is how the wrong client gets
+        // disconnected. Jellyfin fills Client and DeviceId from the token's
+        // device when the header leaves them out, so a real client has both.
+        var auth = connection.AuthorizationInfo;
+        if (auth is not null && !string.IsNullOrEmpty(auth.DeviceId) && !string.IsNullOrEmpty(auth.Client))
         {
-            _sockets[connection] = new Entry(connection.AuthorizationInfo?.Client, deviceId);
+            _sockets[connection] = new Entry(auth.Client, auth.DeviceId, auth.UserId, _now());
             connection.Closed += (_, _) => _sockets.TryRemove(connection, out _);
         }
 
         return Task.CompletedTask;
     }
 
-    private static bool IsStale(IWebSocketConnection connection, Entry entry)
+    private bool IsStale(IWebSocketConnection connection, Entry entry)
     {
         var last = connection.LastActivityDate;
         if (connection.LastKeepAliveDate > last)
@@ -94,10 +129,10 @@ public class SocketLiveness : IWebSocketListener, IDisposable
             last = entry.ConnectedAt;
         }
 
-        return DateTime.UtcNow - last >= LostTimeout;
+        return _now() - last >= LostTimeout;
     }
 
-    private void Sweep()
+    internal void Sweep()
     {
         // Timer callbacks can overlap; two sweeps reading the same entry's
         // ReportedDead would both report (and count) one death.
@@ -124,9 +159,10 @@ public class SocketLiveness : IWebSocketListener, IDisposable
 
                 if (stale)
                 {
-                    // Only presume the CLIENT dead when it has no other live socket
-                    // (a reconnect opens a fresh socket while the zombie lingers).
-                    // Another app on the same device is not a sibling: it is a
+                    // Only presume the SESSION dead when it has no other live
+                    // socket (a reconnect opens a fresh socket while the zombie
+                    // lingers). Another app on the same device, or another user
+                    // on the same app and device, is not a sibling: it is a
                     // different session, and alive or not says nothing of this one.
                     var hasLiveSibling = _sockets.Any(kv =>
                         !ReferenceEquals(kv.Key, connection)
@@ -163,40 +199,38 @@ public class SocketLiveness : IWebSocketListener, IDisposable
 
     private static bool SameIdentity(Entry a, Entry b)
         => string.Equals(a.DeviceId, b.DeviceId, StringComparison.OrdinalIgnoreCase)
-            && (a.Client is null || b.Client is null || string.Equals(a.Client, b.Client, StringComparison.OrdinalIgnoreCase));
+            && string.Equals(a.Client, b.Client, StringComparison.OrdinalIgnoreCase)
+            && a.UserId.Equals(b.UserId);
 
     /// <summary>
-    /// The sessions a socket belongs to: same device id and same client, the
-    /// identity a Jellyfin session is keyed by. The device id alone is not
-    /// unique — two apps on one device each have a session under it — and
-    /// taking the first match could disconnect the wrong one, or leave the
-    /// dead one attached. A socket that did not say which client it is
-    /// matches every session of its device, as before.
+    /// The sessions a socket belongs to: same client, device id and user,
+    /// the identity a Jellyfin 12 session is keyed by.
     /// </summary>
     /// <param name="sessions">The server's sessions.</param>
-    /// <param name="client">The socket's client, if it declared one.</param>
+    /// <param name="client">The socket's client.</param>
     /// <param name="deviceId">The socket's device id.</param>
+    /// <param name="userId">The socket's user.</param>
     /// <returns>The matching sessions.</returns>
-    public static IReadOnlyList<SessionInfo> SessionsOf(IEnumerable<SessionInfo> sessions, string? client, string deviceId)
+    internal static IReadOnlyList<SessionInfo> SessionsOf(IEnumerable<SessionInfo> sessions, string client, string deviceId, Guid userId)
         => sessions
             .Where(s => string.Equals(s.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase)
-                && (client is null || string.Equals(s.Client, client, StringComparison.OrdinalIgnoreCase)))
+                && string.Equals(s.Client, client, StringComparison.OrdinalIgnoreCase)
+                && s.UserId.Equals(userId))
             .ToList();
 
     private void Notify(Entry entry, bool dead)
     {
-        var sessions = SessionsOf(_sessionManager.Sessions, entry.Client, entry.DeviceId);
-        foreach (var session in sessions)
+        foreach (var session in SessionsOf(_sessionManager.Sessions, entry.Client, entry.DeviceId, entry.UserId))
         {
             if (dead)
             {
                 _logger.LogInformation("Device {DeviceId} ({Client}) stopped keep-aliving (socket not aborted by core); marking session {SessionId} disconnected for SyncPlay.", entry.DeviceId, entry.Client, session.Id);
-                _engine.MarkSessionDisconnected(session);
+                _markDisconnected(session);
             }
             else
             {
                 _logger.LogInformation("Device {DeviceId} ({Client}) resumed keep-aliving; re-attaching session {SessionId}.", entry.DeviceId, entry.Client, session.Id);
-                _engine.ReattachSession(session);
+                _reattach(session);
             }
         }
     }
@@ -204,7 +238,7 @@ public class SocketLiveness : IWebSocketListener, IDisposable
     /// <inheritdoc />
     public void Dispose()
     {
-        _timer.Dispose();
+        _timer?.Dispose();
         GC.SuppressFinalize(this);
     }
 }
