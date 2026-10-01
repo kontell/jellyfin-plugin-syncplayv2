@@ -372,8 +372,10 @@ public sealed class ManagerDiagnosticsTests : IDisposable
     }
 
     [Fact]
-    public void ALateEndOfALeaverLeavesAReplacementInstancesBuffer()
+    public void AReplacementInstancesLeaveCancelsItsBufferAndTheOldInstancesEndChangesNothing()
     {
+        // The leave cancels the replacement's held-back Buffer; the old
+        // instance's late end, for a session no longer in a group, finds none.
         var (_, b, playlistItemId) = StartPlaying();
         var reconnected = new SessionInfo(_sessionManager, NullLogger.Instance)
         {
@@ -387,10 +389,24 @@ public sealed class ManagerDiagnosticsTests : IDisposable
         _manager.ReattachSession(reconnected);
         _manager.HandleRequest(reconnected, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
         _manager.LeaveGroup(reconnected, new LeaveGroupRequest(), CancellationToken.None);
+        Assert.Equal(0, _manager.HeldBackBufferingCount);
 
         RaiseSessionEnded(b);
 
+        Assert.Equal(0, _manager.HeldBackBufferingCount);
+        Assert.DoesNotContain(_manager.GetDiagnostics().Groups.Single().Members, m => m.UserName == "b");
+    }
+
+    [Fact]
+    public void ALeaveCancelsTheBufferTheGraceHoldsBack()
+    {
+        var (_, b, playlistItemId) = StartPlaying();
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
         Assert.Equal(1, _manager.HeldBackBufferingCount);
+
+        _manager.LeaveGroup(b, new LeaveGroupRequest(), CancellationToken.None);
+
+        Assert.Equal(0, _manager.HeldBackBufferingCount);
     }
 
     [Fact]
