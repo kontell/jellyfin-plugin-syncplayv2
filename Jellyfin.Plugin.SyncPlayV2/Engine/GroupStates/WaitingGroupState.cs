@@ -675,10 +675,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 return;
             }
 
-            // Both sides in ticks. The existing recovery branch below compares
-            // a tick count against DefaultPing's raw 500 — which is 0.05ms, not
-            // 500ms — so it is copied deliberately-not: left alone there, but
-            // not reproduced here.
+            // Both sides in ticks: DefaultPing is milliseconds.
             var delayTicks = Math.Max(
                 context.GetHighestPing() * 2 * TimeSpan.TicksPerMillisecond,
                 context.DefaultPing * TimeSpan.TicksPerMillisecond);
