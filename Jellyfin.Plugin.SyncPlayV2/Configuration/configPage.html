@@ -41,7 +41,7 @@
                     <button is="emby-button" type="button" id="SyncPlayV2CopyReport" class="raised">
                         <span>Copy report for a bug report</span>
                     </button>
-                    <div class="fieldDescription">Copies the settings, versions, counters and groups as JSON with user names, device names, group names and titles removed, ready to paste into a GitHub issue.</div>
+                    <div class="fieldDescription">Copies the settings, versions, counters, groups (the last three closed ones included) and each group's last events as JSON with user names, device names, group names and titles removed, ready to paste into a GitHub issue.</div>
                     <textarea id="SyncPlayV2ReportText" readonly="readonly" rows="10" style="display:none;width:100%;margin-top:.5em;font-family:monospace;"></textarea>
                 </div>
 
@@ -104,6 +104,7 @@
                 var lastReport = null;
                 var refreshTimer = null;
                 var visible = false;
+                var openHistories = {};
                 var inFlight = false;
                 var generation = 0;
 
@@ -173,12 +174,38 @@
                     return flags.join(', ');
                 }
 
+                // Collapsed, and kept open across refreshes once opened. A closed
+                // group's event ages count from its closing.
+                function renderHistory(host, g) {
+                    if (!g.History || !g.History.length) {
+                        return;
+                    }
+
+                    var offset = g.ClosedSecondsAgo || 0;
+                    var details = el('details', null, 'margin:-.6em 0 1.2em');
+                    if (openHistories[g.GroupId]) {
+                        details.open = true;
+                    }
+
+                    details.addEventListener('toggle', function () {
+                        openHistories[g.GroupId] = details.open;
+                    });
+                    details.appendChild(el('summary', 'Last ' + g.History.length + ' events'));
+                    g.History.forEach(function (e) {
+                        var line = clock(e.SecondsAgo + offset) + ' ago · ' + e.Event
+                            + (e.Member ? ' · ' + e.Member : '')
+                            + (e.Detail ? ' · ' + e.Detail : '')
+                            + (e.Event === 'State' ? '' : ' · in ' + e.State);
+                        details.appendChild(el('div', line, 'font-family:monospace;font-size:.9em;opacity:.85'));
+                    });
+                    host.appendChild(details);
+                }
+
                 function renderGroups(report) {
                     var host = page.querySelector('#SyncPlayV2Groups');
                     host.textContent = '';
                     if (!report.Groups.length) {
-                        host.appendChild(el('p', 'No SyncPlay groups.'));
-                        return;
+                        host.appendChild(el('p', 'No active groups.'));
                     }
 
                     report.Groups.forEach(function (g) {
@@ -203,7 +230,16 @@
                             table.appendChild(row);
                         });
                         host.appendChild(table);
+                        renderHistory(host, g);
                     });
+
+                    if ((report.ClosedGroups || []).length) {
+                        host.appendChild(el('h3', 'Recently closed', 'margin-bottom:.2em'));
+                        report.ClosedGroups.forEach(function (g) {
+                            host.appendChild(el('div', g.GroupName + ' · closed ' + clock(g.ClosedSecondsAgo) + ' ago', 'opacity:.8;margin-bottom:.9em'));
+                            renderHistory(host, g);
+                        });
+                    }
                 }
 
                 function renderCounters(c) {
@@ -280,6 +316,50 @@
                         return names[name];
                     }
 
+                    function group(g, name) {
+                        return {
+                            Group: name,
+                            ClosedSecondsAgo: g.ClosedSecondsAgo,
+                            State: g.State,
+                            StateSeconds: g.StateSeconds,
+                            StateVersion: g.StateVersion,
+                            HasItem: !!g.ItemName,
+                            PositionSeconds: g.PositionSeconds,
+                            RunTimeSeconds: g.RunTimeSeconds,
+                            QueueLength: g.QueueLength,
+                            Members: g.Members.map(function (m) {
+                                return {
+                                    UserName: alias(m.UserName),
+                                    Client: m.Client,
+                                    ClientVersion: m.ClientVersion,
+                                    AutoplayNextEpisode: m.AutoplayNextEpisode,
+                                    ProtocolVersion: m.ProtocolVersion,
+                                    ExternalContent: m.ExternalContent,
+                                    Ping: m.Ping,
+                                    IsConnected: m.IsConnected,
+                                    DisconnectedSeconds: m.DisconnectedSeconds,
+                                    IsBuffering: m.IsBuffering,
+                                    BufferingForLoad: m.BufferingForLoad,
+                                    BufferingSeconds: m.BufferingSeconds,
+                                    IgnoreGroupWait: m.IgnoreGroupWait,
+                                    IgnoredByTimeout: m.IgnoredByTimeout,
+                                    Spectator: m.Spectator,
+                                    HotJoining: m.HotJoining,
+                                    CorrectionAttempts: m.CorrectionAttempts
+                                };
+                            }),
+                            History: (g.History || []).map(function (e) {
+                                return {
+                                    SecondsAgo: e.SecondsAgo,
+                                    Event: e.Event,
+                                    Member: e.Member ? alias(e.Member) : null,
+                                    Detail: e.Detail,
+                                    State: e.State
+                                };
+                            })
+                        };
+                    }
+
                     return {
                         GeneratedAt: lastReport.GeneratedAt,
                         PluginVersion: lastReport.PluginVersion,
@@ -288,37 +368,10 @@
                         Timings: lastStatus ? lastStatus.Timings : null,
                         Counters: lastReport.Counters,
                         Groups: lastReport.Groups.map(function (g, i) {
-                            return {
-                                Group: 'group ' + (i + 1),
-                                State: g.State,
-                                StateSeconds: g.StateSeconds,
-                                StateVersion: g.StateVersion,
-                                HasItem: !!g.ItemName,
-                                PositionSeconds: g.PositionSeconds,
-                                RunTimeSeconds: g.RunTimeSeconds,
-                                QueueLength: g.QueueLength,
-                                Members: g.Members.map(function (m) {
-                                    return {
-                                        UserName: alias(m.UserName),
-                                        Client: m.Client,
-                                        ClientVersion: m.ClientVersion,
-                                        AutoplayNextEpisode: m.AutoplayNextEpisode,
-                                        ProtocolVersion: m.ProtocolVersion,
-                                        ExternalContent: m.ExternalContent,
-                                        Ping: m.Ping,
-                                        IsConnected: m.IsConnected,
-                                        DisconnectedSeconds: m.DisconnectedSeconds,
-                                        IsBuffering: m.IsBuffering,
-                                        BufferingForLoad: m.BufferingForLoad,
-                                        BufferingSeconds: m.BufferingSeconds,
-                                        IgnoreGroupWait: m.IgnoreGroupWait,
-                                        IgnoredByTimeout: m.IgnoredByTimeout,
-                                        Spectator: m.Spectator,
-                                        HotJoining: m.HotJoining,
-                                        CorrectionAttempts: m.CorrectionAttempts
-                                    };
-                                })
-                            };
+                            return group(g, 'group ' + (i + 1));
+                        }),
+                        ClosedGroups: (lastReport.ClosedGroups || []).map(function (g, i) {
+                            return group(g, 'closed group ' + (i + 1));
                         })
                     };
                 }

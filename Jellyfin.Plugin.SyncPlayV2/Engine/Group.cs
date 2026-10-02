@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,6 +12,7 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Controller.SyncPlay;
 using Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates;
+using MediaBrowser.Controller.SyncPlay.PlaybackRequests;
 using MediaBrowser.Controller.SyncPlay.Queue;
 using MediaBrowser.Controller.SyncPlay.Requests;
 using MediaBrowser.Model.SyncPlay;
@@ -133,6 +135,12 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         private DateTime _stateSince = DateTime.UtcNow;
 
         /// <summary>
+        /// The group's last events, for diagnostics. Feature divergence
+        /// (VENDORED.md): recorded where the engine already logs the event.
+        /// </summary>
+        private readonly GroupHistory _history = new();
+
+        /// <summary>
         /// Gets the default ping value used for sessions.
         /// </summary>
         /// <value>The default ping.</value>
@@ -217,6 +225,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     _counters.Reconnect();
                 }
 
+                Record(member.IsConnected ? "Joined again" : "Rejoined after disconnecting", member.UserName, "v" + protocolVersion);
                 member.IsConnected = true;
                 member.ProtocolVersion = protocolVersion;
                 _addedNewMember = false;
@@ -224,6 +233,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             else
             {
                 _addedNewMember = true;
+                Record("Joined", session.UserName, "v" + protocolVersion);
                 _participants.Add(
                     session.Id,
                     new GroupMember(session)
@@ -243,7 +253,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <param name="session">The session.</param>
         private void RemoveSession(SessionInfo session)
         {
-            _participants.Remove(session.Id);
+            if (_participants.Remove(session.Id, out GroupMember left))
+            {
+                Record("Left", left.UserName, null);
+            }
+
             BumpStateVersion();
         }
 
@@ -475,6 +489,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             // and notify clients of state changes. The actual syncing of media playback
             // happens client side. Clients are aware of the server's time and use it to sync.
             _logger.LogInformation("Session {SessionId} requested {RequestType} in group {GroupId} that is {StateType}.", session.Id, request.Action, GroupId.ToString(), _state.Type);
+            if (request.Action != PlaybackRequestType.Ping)
+            {
+                Record(request.Action.ToString(), _participants.TryGetValue(session.Id, out GroupMember requester) ? requester.UserName : session.UserName, DescribeRequest(request));
+            }
 
             // Apply requested changes to this group given its current state.
             // Every request has a slightly different outcome depending on the group's state.
@@ -579,6 +597,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (_participants.ContainsKey(session.Id) && _addedNewMember)
             {
                 _counters.HotJoin();
+                Record("Hot join", session.UserName, null);
             }
 
             StartCatchUp(session, cancellationToken);
@@ -632,6 +651,24 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
         /// <inheritdoc />
         public void RendezvousMember(SessionInfo session, string reason, CancellationToken cancellationToken)
+            => Rendezvous(session, reason, RendezvousCause(reason), cancellationToken);
+
+        /// <summary>
+        /// Rendezvouses a member that outlived the group's wait. The history
+        /// records which timeout and how long it was: both are configurable.
+        /// </summary>
+        /// <param name="session">The member's session.</param>
+        /// <param name="timeout">The timeout it outlived.</param>
+        /// <param name="loading">Whether it was loading an item at the group's request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        public void RendezvousOnWaitTimeout(SessionInfo session, TimeSpan timeout, bool loading, CancellationToken cancellationToken)
+            => Rendezvous(
+                session,
+                $"kept the group waiting for over {timeout}",
+                "wait timeout, " + (loading ? "was loading" : "had stalled") + ", " + timeout.TotalSeconds.ToString("0", CultureInfo.InvariantCulture) + " s",
+                cancellationToken);
+
+        private void Rendezvous(SessionInfo session, string reason, string cause, CancellationToken cancellationToken)
         {
             if (!_participants.TryGetValue(session.Id, out GroupMember member))
             {
@@ -654,6 +691,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             // the point — a member that cannot catch up by seeking is in
             // exactly the position of one that has just walked in.
             _counters.Rendezvous();
+            Record("Rendezvous", member.UserName, cause);
             StartCatchUp(session, cancellationToken);
         }
 
@@ -877,6 +915,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 if (member.IsConnected)
                 {
                     _counters.Disconnect();
+                    Record("Disconnected", member.UserName, null);
                 }
 
                 member.IsConnected = false;
@@ -904,6 +943,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 {
                     member.IsConnected = true;
                     _counters.Reconnect();
+                    Record("Reconnected", member.UserName, "reported again");
                     BumpStateVersion();
                 }
             }
@@ -933,6 +973,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (!member.IsConnected)
             {
                 _counters.Reconnect();
+                Record("Reconnected", member.UserName, "new connection");
             }
 
             member.Session = session;
@@ -1026,6 +1067,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (_participants.TryGetValue(session.Id, out GroupMember value))
             {
                 value.IgnoredByTimeout = true;
+                Record("Wait timed out", value.UserName, value.BufferingForLoad ? "was loading" : "had stalled");
             }
         }
 
@@ -1080,6 +1122,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (!state.Type.Equals(_state.Type))
             {
                 _stateSince = DateTime.UtcNow;
+                _history.Add(_stateSince, "State", null, _state.Type + " -> " + state.Type, state.Type);
             }
 
             this._state = state;
@@ -1267,10 +1310,27 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         }
 
         /// <inheritdoc />
-        public void RecordCorrection(SessionInfo session)
+        public void RecordCorrection(SessionInfo session, bool countsTowardsRendezvous)
         {
             _counters.Correction();
+            if (_participants.TryGetValue(session.Id, out GroupMember member))
+            {
+                // CorrectionAttempts counts only the corrections towards a
+                // rendezvous, and ShouldRendezvous has already counted this one.
+                Record("Position correction", member.UserName, countsTowardsRendezvous ? "attempt " + member.CorrectionAttempts : null);
+            }
         }
+
+        /// <summary>
+        /// Records a Buffer the buffering grace holds back: it reaches
+        /// <see cref="HandleRequest"/> only if the grace runs out, so a stall the
+        /// member recovers from would leave no trace before its Ready. Call
+        /// under the group's lock.
+        /// </summary>
+        /// <param name="session">The session that reported the Buffer.</param>
+        /// <param name="request">The Buffer.</param>
+        internal void RecordHeldBackBuffer(SessionInfo session, BufferGroupRequest request)
+            => Record("Buffer held back", _participants.TryGetValue(session.Id, out GroupMember member) ? member.UserName : session.UserName, DescribeRequest(request));
 
         /// <summary>
         /// The group as the diagnostics page shows it: state, position, and for
@@ -1326,6 +1386,41 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     HotJoining = member.HotJoining,
                     CorrectionAttempts = member.CorrectionAttempts,
                 }).ToList(),
+                History = _history.Snapshot(now),
+            };
+        }
+
+        private void Record(string kind, string member, string detail)
+            => _history.Add(DateTime.UtcNow, kind, member, detail, _state.Type);
+
+        /// <summary>
+        /// A rendezvous reason as one of a fixed set, so the history's Detail
+        /// stays numbers and flags whatever a caller passes as free text.
+        /// </summary>
+        private static string RendezvousCause(string reason)
+            => reason switch
+            {
+                _ when reason.StartsWith("corrections", StringComparison.Ordinal) => "corrections not converging",
+                _ => "other",
+            };
+
+        /// <summary>What a request carried that explains the group's reaction: numbers and flags only.</summary>
+        private string DescribeRequest(IGroupPlaybackRequest request)
+        {
+            static string At(long ticks) => Math.Round(TimeSpan.FromTicks(ticks).TotalSeconds, 1) + " s";
+
+            var current = PlayQueue.IsItemPlaying() ? PlayQueue.GetPlayingItemPlaylistId() : Guid.Empty;
+            return request switch
+            {
+                ReadyGroupRequest ready => At(ready.PositionTicks) + (ready.IsPlaying ? ", playing" : ", paused")
+                    + (ready.PlaylistItemId.Equals(current) ? string.Empty : ", other item"),
+                BufferGroupRequest buffer => At(buffer.PositionTicks) + (buffer.IsPlaying ? ", playing" : ", paused")
+                    + (buffer.PlaylistItemId.Equals(current) ? string.Empty : ", other item"),
+                SeekGroupRequest seek => "to " + At(seek.PositionTicks),
+                // Also synthesized by the engine itself (wait timeout, a death while
+                // the group waits), so it says what it does, not who asked.
+                IgnoreWaitGroupRequest ignoreWait => ignoreWait.IgnoreWait ? "not waited for" : "waited for again",
+                _ => null,
             };
         }
 

@@ -125,6 +125,37 @@ public sealed class ManagerDiagnosticsTests : IDisposable
     }
 
     [Fact]
+    public void ARebufferTheGraceSparesIsInTheHistoryBeforeItsReady()
+    {
+        // The held-back Buffer never reaches the group when Ready cancels it.
+        var (_, b, playlistItemId) = StartPlaying();
+
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        _manager.HandleRequest(b, new ReadyGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+
+        var events = _manager.GetDiagnostics().Groups.Single().History
+            .Where(e => e.Member == "b")
+            .Select(e => e.Event)
+            .Take(2)
+            .ToList();
+        Assert.Equal(new[] { "Ready", "Buffer held back" }, events);
+    }
+
+    [Fact]
+    public void ARebufferPastTheGraceIsHeldBackOnceAndAppliedOnce()
+    {
+        var (_, b, playlistItemId) = StartPlaying();
+
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        WaitUntil(() => _manager.GetDiagnostics().Groups.Single().State == GroupStateType.Waiting);
+
+        var history = _manager.GetDiagnostics().Groups.Single().History;
+        Assert.Single(history, e => e.Event == "Buffer held back");
+        Assert.Single(history, e => e.Event == "Buffer");
+    }
+
+    [Fact]
     public void ASpectatorsRebufferIsNeitherAbsorbedNorAppliedByTheGrace()
     {
         // The grace holds back any Buffer while the group plays, but a
@@ -172,6 +203,50 @@ public sealed class ManagerDiagnosticsTests : IDisposable
         _manager.HandleRequest(b, new ReadyGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
 
         Assert.Equal(1, _manager.GetDiagnostics().Counters.BufferingRecovered);
+    }
+
+    [Fact]
+    public void AClosedGroupKeepsItsHistoryInTheReport()
+    {
+        // A group closes when its last member leaves, and the members of a
+        // group that stalled for good are the ones who leave: its history is
+        // what the report most needs then.
+        var (a, b, playlistItemId) = StartPlaying();
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+        _manager.LeaveGroup(a, new LeaveGroupRequest(), CancellationToken.None);
+        _manager.LeaveGroup(b, new LeaveGroupRequest(), CancellationToken.None);
+
+        var report = _manager.GetDiagnostics();
+
+        Assert.Empty(report.Groups);
+        var closed = Assert.Single(report.ClosedGroups);
+        Assert.Equal("manager", closed.GroupName);
+        Assert.NotNull(closed.ClosedSecondsAgo);
+        Assert.Equal(new[] { "Left", "Left" }, closed.History.Take(2).Select(e => e.Event));
+        Assert.Contains(closed.History, e => e.Event == "Play");
+    }
+
+    [Fact]
+    public void OnlyTheLastClosedGroupsAreKeptNewestFirst()
+    {
+        for (var i = 0; i < SyncPlayManagerV2.ClosedGroupsKept + 2; i++)
+        {
+            var (a, _) = Session("a" + i);
+            _manager.NewGroup(a, new NewGroupRequest("group " + i), CancellationToken.None);
+            _manager.LeaveGroup(a, new LeaveGroupRequest(), CancellationToken.None);
+        }
+
+        var names = _manager.GetDiagnostics().ClosedGroups.Select(g => g.GroupName).ToList();
+
+        Assert.Equal(new[] { "group 4", "group 3", "group 2" }, names);
+    }
+
+    [Fact]
+    public void ALiveGroupHasNoClosingTime()
+    {
+        StartPlaying();
+
+        Assert.Null(_manager.GetDiagnostics().Groups.Single().ClosedSecondsAgo);
     }
 
     private static void WaitUntil(Func<bool> condition)

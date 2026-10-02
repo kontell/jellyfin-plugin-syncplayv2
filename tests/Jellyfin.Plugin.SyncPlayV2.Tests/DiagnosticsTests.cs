@@ -241,6 +241,106 @@ public class DiagnosticsTests
 
         Assert.Null(harness.Group.GetDiagnostics().Members.Single().AutoplayNextEpisode);
     }
+
+    [Theory]
+    [InlineData(1, null)]
+    [InlineData(2, "attempt 1")]
+    public void ACorrectionIsNumberedOnlyWhereItCountsTowardsARendezvous(int protocolVersion, string? detail)
+    {
+        // CorrectionAttempts counts only a v2 member's corrections towards a
+        // rendezvous; a v1 member's are never counted.
+        var harness = new GroupHarness();
+        var a = harness.Join("a", protocolVersion);
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+        a.Buffer(Minute, isPlaying: true);
+
+        a.Ready(Minute - TimeSpan.FromSeconds(9).Ticks, isPlaying: false);
+
+        var diagnostics = harness.Group.GetDiagnostics();
+        var correction = Assert.Single(diagnostics.History, e => e.Event == "Position correction");
+        Assert.Equal(detail, correction.Detail);
+        Assert.Equal(protocolVersion == 2 ? 1 : 0, diagnostics.Members.Single(m => m.UserName == "a").CorrectionAttempts);
+    }
+
+    [Fact]
+    public void TheHistoryExplainsAStallAfterItHasPassed()
+    {
+        // The panel shows the present; by the time an admin opens it the
+        // stall is over. The history keeps what happened, newest first.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+
+        b.Buffer(Minute);
+        b.TimeOut();
+        a.Ping(120);
+
+        var history = harness.Group.GetDiagnostics().History;
+        var events = history.Select(e => e.Event).ToList();
+
+        Assert.True(events.IndexOf("Wait timed out") >= 0 && events.IndexOf("Wait timed out") < events.IndexOf("Buffer"), string.Join(", ", events));
+        Assert.Contains(history, e => e.Event == "State" && e.Detail == "Playing -> Waiting");
+        Assert.Contains(history, e => e.Event == "Joined" && e.Member == "b");
+        Assert.DoesNotContain("Ping", events);
+        Assert.True(history.Zip(history.Skip(1)).All(p => p.First.SecondsAgo <= p.Second.SecondsAgo));
+    }
+
+    [Fact]
+    public void TheHistoryKeepsOnlyTheLastEvents()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        harness.StartPlaying(new[] { a }, Minute);
+
+        for (var i = 0; i < 2 * Diagnostics.GroupHistory.Capacity; i++)
+        {
+            a.Pause();
+            a.Unpause();
+        }
+
+        a.Seek(2 * Minute);
+
+        // The last ones: the newest is kept and the oldest (the join) is gone.
+        var history = harness.Group.GetDiagnostics().History;
+        Assert.Equal(Diagnostics.GroupHistory.Capacity, history.Count);
+        Assert.Contains(history.Take(3), e => e.Event == "Seek");
+        Assert.DoesNotContain(history, e => e.Event == "Joined");
+    }
+
+    [Fact]
+    public void AStaleItemIsMarkedInTheHistory()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b }, Minute);
+
+        b.Buffer(Minute, playlistItemId: Guid.NewGuid());
+
+        var buffer = harness.Group.GetDiagnostics().History.First(e => e.Event == "Buffer");
+        Assert.Equal("b", buffer.Member);
+        Assert.Contains("other item", buffer.Detail);
+    }
+
+    [Fact]
+    public void TheHistoryNamesTheRendezvousCauseNotTheCallersText()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a", protocolVersion: 2);
+        var b = harness.Join("b", protocolVersion: 2);
+        harness.StartPlaying(new[] { a, b }, Minute);
+
+        harness.Group.RendezvousOnWaitTimeout(b.Session, TimeSpan.FromSeconds(30), loading: true, CancellationToken.None);
+        harness.Group.RendezvousOnWaitTimeout(b.Session, TimeSpan.FromSeconds(10), loading: false, CancellationToken.None);
+        harness.Group.RendezvousMember(a.Session, "free text from somewhere", CancellationToken.None);
+
+        // Newest first. Both timeouts are configurable: the length is kept.
+        var causes = harness.Group.GetDiagnostics().History.Where(e => e.Event == "Rendezvous").Select(e => e.Detail).ToList();
+        Assert.Equal(new[] { "other", "wait timeout, had stalled, 10 s", "wait timeout, was loading, 30 s" }, causes);
+        Assert.DoesNotContain(harness.Group.GetDiagnostics().History, e => e.Event == "Joined" && e.Detail != "v2");
+    }
 }
 
 /// <summary>An IUserManager whose every call fails, as a broken user database would.</summary>
