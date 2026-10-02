@@ -184,6 +184,10 @@ internal sealed class Member
 
     public void Forget() => _controller.Sent.Clear();
 
+    public void Leave() => _harness.Group.SessionLeave(Session, new LeaveGroupRequest(), CancellationToken.None);
+
+    public void Rejoin() => _harness.Group.SessionJoin(Session, new JoinGroupRequest(_harness.Group.GroupId), CancellationToken.None);
+
     public void Ready(long positionTicks = 0, bool isPlaying = false)
         => Send(new ReadyGroupRequest(DateTime.UtcNow, positionTicks, isPlaying, _harness.PlaylistItemId));
 

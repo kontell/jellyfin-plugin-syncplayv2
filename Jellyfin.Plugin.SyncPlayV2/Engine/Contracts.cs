@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Controller.SyncPlay;
+using MediaBrowser.Model.SyncPlay;
 
 namespace Jellyfin.Plugin.SyncPlayV2.Engine;
 
@@ -13,6 +14,14 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine;
 /// </summary>
 public interface IGroupStateContextV2 : IGroupStateContext
 {
+    /// <summary>
+    /// The play queue for a member that has just joined, dated when it is
+    /// taken (see <see cref="Group.JoinQueueStamp"/>) instead of when the
+    /// queue last changed.
+    /// </summary>
+    /// <returns>The play queue update.</returns>
+    PlayQueueUpdate GetJoinPlayQueueUpdate();
+
     /// <summary>
     /// Maximum accepted position offset for the member, in milliseconds:
     /// clamp(2 x ping, 500, 2000).
