@@ -93,6 +93,7 @@ public class WaitExitTests
     private static void AssertToldPaused(Member member)
     {
         Assert.Contains(member.Commands, command => command.Command == "Pause");
-        Assert.Contains(member.Updates, update => IsState(update, GroupStateType.Paused));
+        Assert.Contains(member.Updates, update => IsState(update, GroupStateType.Paused)
+            && ((GroupStateUpdate)update.Data!).Reason == PlaybackRequestType.Ready);
     }
 }

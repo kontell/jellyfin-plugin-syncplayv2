@@ -836,8 +836,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
         /// <summary>
         /// Ends the wait in Paused when no Ready ends it (the member waited for
         /// leaves, or is no longer waited for): everyone is sent the Pause and the
-        /// Paused state, as Paused's Ready handler sends them after a wait. Fix
-        /// divergence (VENDORED.md). The position stays where the wait froze it.
+        /// Paused state with the Ready reason, as Paused's Ready handler sends them
+        /// after a wait. Jellyfin Web clears its wait icon on Paused/Ready, while
+        /// Paused/Pause pops its pause OSD. Fix divergence (VENDORED.md). The
+        /// position stays where the wait froze it.
         /// </summary>
         /// <param name="context">The context of the state.</param>
         /// <param name="session">The session that ended the wait.</param>
@@ -849,7 +851,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
             var command = context.NewSyncPlayCommand(SendCommandType.Pause);
             context.SendCommand(session, SyncPlayBroadcastType.AllGroup, command, cancellationToken);
 
-            var stateUpdate = new GroupStateUpdate(GroupStateType.Paused, PlaybackRequestType.Pause);
+            var stateUpdate = new GroupStateUpdate(GroupStateType.Paused, PlaybackRequestType.Ready);
             context.SendGroupUpdate(session, SyncPlayBroadcastType.AllGroup, new SyncPlayStateUpdate(context.GroupId, stateUpdate), cancellationToken);
         }
 
