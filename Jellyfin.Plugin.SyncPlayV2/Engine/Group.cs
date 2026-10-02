@@ -513,8 +513,8 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             {
                 // Feature divergence (VENDORED.md): an item load is the
                 // group-wide wait the same request starts. A change that starts
-                // none (removing the playing entry keeps the state) must not
-                // leave the mark behind for the next wait, a Seek's included.
+                // none (removing the last entry stops the group) must not leave
+                // the mark behind for the next wait, a Seek's included.
                 _itemLoadPending = false;
             }
         }

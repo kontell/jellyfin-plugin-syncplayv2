@@ -94,6 +94,19 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 var stopRequest = new StopGroupRequest();
                 idleState.HandleRequest(stopRequest, context, Type, session, cancellationToken);
             }
+            else if (playingItemRemoved)
+            {
+                // Fix divergence (VENDORED.md): the queue moved on to another entry,
+                // which every member loads (Jellyfin Web treats this update like
+                // SetCurrentItem). As after a new selection, the group waits for
+                // them, and resumes only if it was playing.
+                if (this is not WaitingGroupState)
+                {
+                    context.SetState(new WaitingGroupState(LoggerFactory) { ResumePlaying = Type.Equals(GroupStateType.Playing) });
+                }
+
+                context.SetAllBuffering(true);
+            }
         }
 
         /// <inheritdoc />
