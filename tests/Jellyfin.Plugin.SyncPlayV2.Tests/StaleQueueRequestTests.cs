@@ -1,0 +1,228 @@
+using System;
+using Jellyfin.Plugin.SyncPlayV2.Tests.Harness;
+using MediaBrowser.Model.SyncPlay;
+using Xunit;
+
+namespace Jellyfin.Plugin.SyncPlayV2.Tests;
+
+/// <summary>
+/// Next and Previous name the entry the client thinks is playing, so that two
+/// members pressing Next at once move the group one item, not two. A request
+/// for an entry the group has left is dropped; it must not stop the group.
+/// </summary>
+public class StaleQueueRequestTests
+{
+    [Fact]
+    public void AStaleNextFromAPlayingGroupKeepsItPlaying()
+    {
+        // Two members press Next; the group has moved on and is playing again
+        // by the time the second request arrives.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlayingTwoItems(new[] { a, b });
+        var first = harness.PlaylistItemId;
+
+        a.NextItem();
+        a.Ready();
+        b.Ready();
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        var second = harness.PlaylistItemId;
+        a.Forget();
+        b.Forget();
+
+        b.NextItem(first);
+
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        Assert.Equal(second, harness.PlaylistItemId);
+        Assert.Empty(a.Commands);
+        Assert.Empty(b.Commands);
+    }
+
+    [Fact]
+    public void AStalePreviousFromAPlayingGroupKeepsItPlaying()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlayingTwoItems(new[] { a, b });
+        var first = harness.PlaylistItemId;
+        a.NextItem();
+        a.Ready();
+        b.Ready();
+        var second = harness.PlaylistItemId;
+
+        b.PreviousItem(first);
+
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        Assert.Equal(second, harness.PlaylistItemId);
+    }
+
+    [Fact]
+    public void AStaleNextFromAPausedGroupKeepsItPaused()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlayingTwoItems(new[] { a, b });
+        var first = harness.PlaylistItemId;
+        a.NextItem();
+        a.Ready();
+        b.Ready();
+        a.Pause();
+        Assert.Equal(GroupStateType.Paused, harness.State);
+
+        b.NextItem(first);
+
+        Assert.Equal(GroupStateType.Paused, harness.State);
+    }
+
+    [Fact]
+    public void AStalePreviousFromAPausedGroupKeepsItPaused()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlayingTwoItems(new[] { a, b });
+        var first = harness.PlaylistItemId;
+        a.NextItem();
+        a.Ready();
+        b.Ready();
+        a.Pause();
+        var second = harness.PlaylistItemId;
+
+        b.PreviousItem(first);
+
+        Assert.Equal(GroupStateType.Paused, harness.State);
+        Assert.Equal(second, harness.PlaylistItemId);
+    }
+
+    [Fact]
+    public void AStaleNextFromAnIdleGroupKeepsItIdle()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlayingTwoItems(new[] { a, b });
+        var first = harness.PlaylistItemId;
+        a.NextItem();
+        a.Ready();
+        b.Ready();
+        a.Stop();
+        Assert.Equal(GroupStateType.Idle, harness.State);
+
+        b.NextItem(first);
+
+        Assert.Equal(GroupStateType.Idle, harness.State);
+    }
+
+    [Fact]
+    public void ANextPastTheLastItemWhileWaitingKeepsTheWait()
+    {
+        // The group moved to the last item and waits for everyone to load
+        // it; another Next (for that item, so not stale) has nowhere to go.
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlayingTwoItems(new[] { a, b });
+        a.NextItem();
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+
+        b.NextItem();
+
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        a.Ready();
+        b.Ready();
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        Assert.DoesNotContain(a.Commands, command => command.Command == "Stop");
+    }
+
+    [Fact]
+    public void APreviousBeforeTheFirstItemWhileWaitingKeepsTheWait()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlayingTwoItems(new[] { a, b });
+        b.Buffer();
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+
+        a.PreviousItem(harness.PlaylistItemId);
+
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        b.Ready();
+        Assert.Equal(GroupStateType.Playing, harness.State);
+        Assert.DoesNotContain(a.Commands, command => command.Command == "Stop");
+        Assert.DoesNotContain(b.Commands, command => command.Command == "Stop");
+    }
+
+    [Fact]
+    public void ANextPastTheLastItemWhileAPausedGroupWaitsKeepsItPaused()
+    {
+        // A Buffer from Paused waits to return to Paused; a step with nowhere
+        // to go must not turn that wait into a resume.
+        var (harness, a, b) = PausedWait();
+
+        a.NextItem();
+
+        AssertEndsPaused(harness, a, b);
+    }
+
+    [Fact]
+    public void APreviousBeforeTheFirstItemWhileAPausedGroupWaitsKeepsItPaused()
+    {
+        var (harness, a, b) = PausedWait();
+
+        a.PreviousItem(harness.PlaylistItemId);
+
+        AssertEndsPaused(harness, a, b);
+    }
+
+    [Fact]
+    public void AStaleNextWhileAPausedGroupWaitsKeepsItPaused()
+    {
+        var (harness, a, b) = PausedWait();
+
+        a.NextItem(Guid.NewGuid());
+
+        AssertEndsPaused(harness, a, b);
+    }
+
+    [Fact]
+    public void ACurrentNextStillMovesTheGroup()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlayingTwoItems(new[] { a, b });
+        var first = harness.PlaylistItemId;
+
+        b.NextItem(first);
+
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        Assert.NotEqual(first, harness.PlaylistItemId);
+    }
+
+    private static (GroupHarness Harness, Member A, Member B) PausedWait()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b });
+        a.Pause();
+        b.Buffer(isPlaying: false);
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        a.Forget();
+        b.Forget();
+        return (harness, a, b);
+    }
+
+    private static void AssertEndsPaused(GroupHarness harness, Member a, Member b)
+    {
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        b.Ready();
+        Assert.Equal(GroupStateType.Paused, harness.State);
+        Assert.DoesNotContain(a.Commands, command => command.Command == "Unpause");
+        Assert.DoesNotContain(b.Commands, command => command.Command == "Unpause");
+    }
+}

@@ -704,8 +704,6 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 InitialStateSet = true;
             }
 
-            ResumePlaying = true;
-
             // Make sure the client knows the playing item, to avoid duplicate requests.
             if (!request.PlaylistItemId.Equals(context.PlayQueue.GetPlayingItemPlaylistId()))
             {
@@ -716,6 +714,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
             var newItem = context.NextItemInQueue();
             if (newItem)
             {
+                // Fix divergence (VENDORED.md): only a step that changes the item
+                // resumes; one that stays in this wait leaves a paused wait paused.
+                ResumePlaying = true;
+
                 // Send playing-queue update.
                 var playQueueUpdate = context.GetPlayQueueUpdate(PlayQueueUpdateReason.NextItem);
                 var update = new SyncPlayPlayQueueUpdate(context.GroupId, playQueueUpdate);
@@ -723,6 +725,13 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
 
                 // Reset status of sessions and await for all Ready events.
                 context.SetAllBuffering(true);
+            }
+            else if (prevState.Equals(GroupStateType.Waiting))
+            {
+                // Fix divergence (VENDORED.md): while the group already waits, a
+                // step with nowhere to go is a no-op; leaving Waiting would drop
+                // a load still in progress.
+                _logger.LogDebug("No next item available in group {GroupId}; it keeps waiting.", context.GroupId.ToString());
             }
             else
             {
@@ -750,8 +759,6 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 InitialStateSet = true;
             }
 
-            ResumePlaying = true;
-
             // Make sure the client knows the playing item, to avoid duplicate requests.
             if (!request.PlaylistItemId.Equals(context.PlayQueue.GetPlayingItemPlaylistId()))
             {
@@ -762,6 +769,10 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
             var newItem = context.PreviousItemInQueue();
             if (newItem)
             {
+                // Fix divergence (VENDORED.md): only a step that changes the item
+                // resumes; one that stays in this wait leaves a paused wait paused.
+                ResumePlaying = true;
+
                 // Send playing-queue update.
                 var playQueueUpdate = context.GetPlayQueueUpdate(PlayQueueUpdateReason.PreviousItem);
                 var update = new SyncPlayPlayQueueUpdate(context.GroupId, playQueueUpdate);
@@ -769,6 +780,13 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
 
                 // Reset status of sessions and await for all Ready events.
                 context.SetAllBuffering(true);
+            }
+            else if (prevState.Equals(GroupStateType.Waiting))
+            {
+                // Fix divergence (VENDORED.md): while the group already waits, a
+                // step with nowhere to go is a no-op; leaving Waiting would drop
+                // a load still in progress.
+                _logger.LogDebug("No previous item available in group {GroupId}; it keeps waiting.", context.GroupId.ToString());
             }
             else
             {
