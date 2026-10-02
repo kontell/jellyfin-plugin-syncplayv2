@@ -59,6 +59,14 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
         /// <inheritdoc />
         public override void HandleRequest(UnpauseGroupRequest request, IGroupStateContext context, GroupStateType prevState, SessionInfo session, CancellationToken cancellationToken)
         {
+            if (!context.PlayQueue.IsItemPlaying())
+            {
+                // Fix divergence (VENDORED.md): with nothing to play there is no
+                // load to wait for; the group stays Idle.
+                SendStopCommand(context, prevState, session, cancellationToken);
+                return;
+            }
+
             // Change state.
             var waitingState = new WaitingGroupState(LoggerFactory);
             context.SetState(waitingState);
