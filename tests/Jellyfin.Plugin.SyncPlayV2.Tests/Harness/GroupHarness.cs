@@ -88,7 +88,7 @@ internal sealed class GroupHarness
             SessionControllers = new ISessionController[] { controller },
         };
 
-        _versions.RegisterHello(Client, session.DeviceId, protocolVersion, externalContent: true);
+        _versions.RegisterHello(Client, session.DeviceId, session.UserId, protocolVersion, externalContent: true);
 
         if (Group.GroupName is null)
         {

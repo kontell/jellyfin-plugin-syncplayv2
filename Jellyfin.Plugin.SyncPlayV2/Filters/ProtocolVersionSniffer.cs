@@ -52,8 +52,8 @@ public class ProtocolVersionSniffer : IAsyncResourceFilter
                         && doc.RootElement.TryGetProperty("ProtocolVersion", out var v)
                         && v.ValueKind == JsonValueKind.Number)
                     {
-                        var (client, deviceId) = SessionResolver.Identity(context.HttpContext.User);
-                        _versions.Register(client, deviceId, v.GetInt32());
+                        var (client, deviceId, userId) = SessionResolver.Identity(context.HttpContext.User);
+                        _versions.Register(client, deviceId, userId, v.GetInt32());
                     }
                 }
             }

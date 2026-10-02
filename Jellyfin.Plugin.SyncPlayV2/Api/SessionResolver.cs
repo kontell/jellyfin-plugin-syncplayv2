@@ -54,7 +54,9 @@ public class SessionResolver
             .ConfigureAwait(false);
     }
 
-    /// <summary>Claim pair used as the protocol-version registry key.</summary>
-    public static (string? Client, string? DeviceId) Identity(ClaimsPrincipal user)
-        => (user.FindFirstValue("Jellyfin-Client"), user.FindFirstValue("Jellyfin-DeviceId"));
+    /// <summary>Claims used as the protocol-version registry key: client, device and user.</summary>
+    public static (string? Client, string? DeviceId, Guid UserId) Identity(ClaimsPrincipal user)
+        => (user.FindFirstValue("Jellyfin-Client"),
+            user.FindFirstValue("Jellyfin-DeviceId"),
+            Guid.TryParse(user.FindFirstValue("Jellyfin-UserId"), out var userId) ? userId : Guid.Empty);
 }

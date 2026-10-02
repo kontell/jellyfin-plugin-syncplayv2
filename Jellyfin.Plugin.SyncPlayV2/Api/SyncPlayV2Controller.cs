@@ -91,9 +91,9 @@ public class SyncPlayV2Controller : ControllerBase
     [Authorize(Policy = Policies.SyncPlayHasAccess)]
     public ActionResult Hello([FromBody] HelloRequest? request)
     {
-        var (client, deviceId) = SessionResolver.Identity(User);
+        var (client, deviceId, userId) = SessionResolver.Identity(User);
         var externalContent = request?.Capabilities?.Contains(ProtocolVersionRegistry.ExternalContentCapability) == true;
-        _versions.RegisterHello(client, deviceId, request?.ProtocolVersion ?? 1, externalContent);
+        _versions.RegisterHello(client, deviceId, userId, request?.ProtocolVersion ?? 1, externalContent);
 
         return Ok(new
         {

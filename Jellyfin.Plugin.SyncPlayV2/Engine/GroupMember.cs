@@ -36,16 +36,18 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         public string SessionId { get; }
 
         /// <summary>
-        /// Gets the identifier of the user.
+        /// Gets or sets the identifier of the user the member joined as. A Join
+        /// of a member already in the group sets it again.
         /// </summary>
         /// <value>The user identifier.</value>
-        public Guid UserId { get; }
+        public Guid UserId { get; set; }
 
         /// <summary>
-        /// Gets the username.
+        /// Gets or sets the username the member joined as. A Join of a member
+        /// already in the group sets it again.
         /// </summary>
         /// <value>The username.</value>
-        public string UserName { get; }
+        public string UserName { get; set; }
 
         /// <summary>
         /// Gets or sets the ping, in milliseconds.
