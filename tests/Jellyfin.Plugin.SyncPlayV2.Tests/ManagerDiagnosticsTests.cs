@@ -249,6 +249,55 @@ public sealed class ManagerDiagnosticsTests : IDisposable
         Assert.Null(_manager.GetDiagnostics().Groups.Single().ClosedSecondsAgo);
     }
 
+    [Fact]
+    public void AHeldBackBufferIsAppliedAsTheMembersCurrentSession()
+    {
+        // The member reconnects with a new session instance during the grace
+        // (no SessionEnded, so the grace is not cancelled). Applying the Buffer
+        // with the instance that reported it addressed the group's replies to
+        // the old instance's controllers.
+        var (a, aSent) = Session("a");
+        var (b, bOld) = Session("b");
+        var group = _manager.NewGroup(a, new NewGroupRequest("manager"), CancellationToken.None);
+        _manager.JoinGroup(b, new JoinGroupRequest(group.GroupId), CancellationToken.None);
+        var item = Guid.NewGuid();
+        Assert.True(ContentDescriptor.TryCreate("harness", "item", "Item", TimeSpan.TicksPerHour, null, out var descriptor));
+        _manager.HandleRequestWithContent(
+            a,
+            new PlayGroupRequest(new[] { item }, 0, 0),
+            new Dictionary<Guid, ContentDescriptor> { [item] = descriptor! },
+            CancellationToken.None);
+        var playlistItemId = PlayingPlaylistItemId(aSent);
+        _manager.HandleRequest(a, new ReadyGroupRequest(DateTime.UtcNow, 0, false, playlistItemId), CancellationToken.None);
+        _manager.HandleRequest(b, new ReadyGroupRequest(DateTime.UtcNow, 0, false, playlistItemId), CancellationToken.None);
+
+        _manager.HandleRequest(b, new BufferGroupRequest(DateTime.UtcNow, 0, true, playlistItemId), CancellationToken.None);
+
+        var bNew = new RecordingController();
+        var reconnected = new SessionInfo(_sessionManager, NullLogger.Instance)
+        {
+            Id = b.Id,
+            UserId = b.UserId,
+            UserName = b.UserName,
+            DeviceId = b.DeviceId,
+            Client = b.Client,
+            SessionControllers = new ISessionController[] { bNew },
+        };
+        _manager.ReattachSession(reconnected);
+        var oldBefore = bOld.Sent.Count;
+        var newBefore = bNew.Sent.Count;
+
+        WaitUntil(() => _manager.GetDiagnostics().Groups.Single().State == GroupStateType.Waiting);
+
+        // Applying the Buffer tells the group it is waiting for this member.
+        Assert.Equal(GroupStateType.Waiting, _manager.GetDiagnostics().Groups.Single().State);
+        Assert.Equal(oldBefore, bOld.Sent.Count);
+        Assert.Contains(
+            bNew.Sent.Skip(newBefore).Select(entry => entry.Data).OfType<WireGroupUpdate>(),
+            update => update.Type == "StateUpdate"
+                && update.Data is GroupStateUpdate { State: GroupStateType.Waiting, Reason: PlaybackRequestType.Buffer });
+    }
+
     private static void WaitUntil(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow + PastTheGrace;

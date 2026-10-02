@@ -869,10 +869,14 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     // If the group stopped playing during the grace period the member's
                     // buffering has either been accounted for already (group-wide wait)
                     // or no longer interrupts anyone.
-                    if (group.State.Equals(GroupStateType.Playing))
+                    // The member's session now, not the one that reported: a
+                    // reconnect during the grace replaces the instance, and
+                    // the replies go to the session they are handed.
+                    var session = group.GetMemberSession(deferred.Session.Id);
+                    if (session is not null && group.State.Equals(GroupStateType.Playing))
                     {
-                        _logger.LogDebug("Session {SessionId} did not recover within the grace period; applying its held-back Buffer in group {GroupId}.", deferred.Session.Id, group.GroupId.ToString());
-                        group.HandleRequest(deferred.Session, deferred.Request, CancellationToken.None);
+                        _logger.LogDebug("Session {SessionId} did not recover within the grace period; applying its held-back Buffer in group {GroupId}.", session.Id, group.GroupId.ToString());
+                        group.HandleRequest(session, deferred.Request, CancellationToken.None);
 
                         // Counted by outcome: the state machine absorbs a stall
                         // that is not the group's to wait for.

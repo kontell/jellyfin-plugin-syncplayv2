@@ -585,6 +585,15 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         private bool AllMembersSeeExternalContent()
             => _participants.Values.All(member => _versions.HasExternalContent(member.Session));
 
+        /// <summary>
+        /// Gets a member's current session: a reconnect can replace the instance
+        /// a request was made with. Call under the group's lock.
+        /// </summary>
+        /// <param name="sessionId">The session id.</param>
+        /// <returns>The member's session, or null if it is not a member.</returns>
+        internal SessionInfo GetMemberSession(string sessionId)
+            => _participants.TryGetValue(sessionId, out GroupMember member) ? member.Session : null;
+
         /// <inheritdoc />
         public bool IsHotJoining(string sessionId)
             => _participants.TryGetValue(sessionId, out GroupMember member) && member.HotJoining;
