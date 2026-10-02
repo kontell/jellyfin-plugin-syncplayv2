@@ -4,13 +4,28 @@
     <title>SyncPlay v2</title>
 </head>
 <body>
-    <div id="SyncPlayV2ConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+    <div id="SyncPlayV2ConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox,emby-select">
         <div data-role="content">
             <div class="content-primary">
                 <div class="verticalSection">
                     <h2 class="sectionTitle">Status</h2>
                     <p id="SyncPlayV2Status">Checking…</p>
                     <div class="fieldDescription" id="SyncPlayV2StatusDetail"></div>
+                </div>
+
+                <div class="verticalSection">
+                    <h2 class="sectionTitle">Jellyfin Web: next-episode autoplay</h2>
+                    <div class="fieldDescription">With <b>Play next episode automatically</b> on, Jellyfin Web expands a one-episode SyncPlay queue to the rest of the series, so a user who joins a group playing an episode gets an error and the player does not open (stock SyncPlay does the same). It is a per-user setting, and turning it off also stops next-episode autoplay outside SyncPlay. Jellyfin Web keeps the value it loaded, so the change applies once that user reloads the page or restarts the app.</div>
+                    <p id="SyncPlayV2AutoplaySummary">Checking…</p>
+                    <div id="SyncPlayV2AutoplayPicker" style="display:none">
+                        <div class="selectContainer">
+                            <select is="emby-select" id="SyncPlayV2AutoplayUser" label="User"></select>
+                        </div>
+                        <button is="emby-button" type="button" id="SyncPlayV2AutoplayOff" class="raised">
+                            <span>Turn off for this user</span>
+                        </button>
+                    </div>
+                    <p id="SyncPlayV2AutoplayDone" class="fieldDescription"></p>
                 </div>
 
                 <div class="verticalSection">
@@ -26,7 +41,7 @@
                     <button is="emby-button" type="button" id="SyncPlayV2CopyReport" class="raised">
                         <span>Copy report for a bug report</span>
                     </button>
-                    <div class="fieldDescription">Copies the settings, counters and groups as JSON with user names, device names, group names and titles removed, ready to paste into a GitHub issue.</div>
+                    <div class="fieldDescription">Copies the settings, versions, counters and groups as JSON with user names, device names, group names and titles removed, ready to paste into a GitHub issue.</div>
                     <textarea id="SyncPlayV2ReportText" readonly="readonly" rows="10" style="display:none;width:100%;margin-top:.5em;font-family:monospace;"></textarea>
                 </div>
 
@@ -150,6 +165,11 @@
                         flags.push(m.CorrectionAttempts + ' correction(s)');
                     }
 
+                    // Only a v1 (web) member's queue is at risk; v2 clients own theirs.
+                    if (m.AutoplayNextEpisode && m.ProtocolVersion < 2) {
+                        flags.push('next-episode autoplay on');
+                    }
+
                     return flags.join(', ');
                 }
 
@@ -176,7 +196,7 @@
                         table.appendChild(head);
                         g.Members.forEach(function (m) {
                             var row = el('tr');
-                            var client = (m.Client || '') + (m.DeviceName ? ' (' + m.DeviceName + ')' : '');
+                            var client = (m.Client || '') + (m.ClientVersion ? ' ' + m.ClientVersion : '') + (m.DeviceName ? ' (' + m.DeviceName + ')' : '');
                             [m.UserName, client, 'v' + m.ProtocolVersion, m.Ping + ' ms', nowText(m), flagsText(m)].forEach(function (v) {
                                 row.appendChild(el('td', v, 'padding:.2em .6em .2em 0;vertical-align:top'));
                             });
@@ -263,6 +283,7 @@
                     return {
                         GeneratedAt: lastReport.GeneratedAt,
                         PluginVersion: lastReport.PluginVersion,
+                        ServerVersion: lastReport.ServerVersion,
                         EngineActive: lastStatus ? lastStatus.EngineActive : null,
                         Timings: lastStatus ? lastStatus.Timings : null,
                         Counters: lastReport.Counters,
@@ -280,6 +301,8 @@
                                     return {
                                         UserName: alias(m.UserName),
                                         Client: m.Client,
+                                        ClientVersion: m.ClientVersion,
+                                        AutoplayNextEpisode: m.AutoplayNextEpisode,
                                         ProtocolVersion: m.ProtocolVersion,
                                         ExternalContent: m.ExternalContent,
                                         Ping: m.Ping,
@@ -355,6 +378,73 @@
                     });
                 }
 
+                // Users who may use SyncPlay and have next-episode autoplay on, in
+                // a dropdown (a list would grow with the users) and turned off one
+                // at a time through the same user-configuration endpoint Jellyfin
+                // Web's playback settings use.
+                // A reply older than the latest request must not rebuild the list:
+                // it would show a user the button has just turned off.
+                var autoplaySeq = 0;
+
+                function loadAutoplay() {
+                    var mine = ++autoplaySeq;
+                    var summary = page.querySelector('#SyncPlayV2AutoplaySummary');
+                    var picker = page.querySelector('#SyncPlayV2AutoplayPicker');
+                    var select = page.querySelector('#SyncPlayV2AutoplayUser');
+                    return ApiClient.getUsers().then(function (users) {
+                        if (mine !== autoplaySeq) {
+                            return;
+                        }
+
+                        var affected = users.filter(function (u) {
+                            return u.Configuration && u.Configuration.EnableNextEpisodeAutoPlay
+                                && !(u.Policy && u.Policy.SyncPlayAccess === 'None');
+                        });
+                        select.textContent = '';
+                        affected.forEach(function (u) {
+                            var option = el('option', u.Name);
+                            option.value = u.Id;
+                            select.appendChild(option);
+                        });
+                        picker.style.display = affected.length ? '' : 'none';
+                        summary.textContent = affected.length
+                            ? affected.length + (affected.length === 1 ? ' user' : ' users') + ' with SyncPlay access ' + (affected.length === 1 ? 'has' : 'have') + ' it on.'
+                            : 'No user with SyncPlay access has it on.';
+                    }).catch(function () {
+                        if (mine !== autoplaySeq) {
+                            return;
+                        }
+
+                        picker.style.display = 'none';
+                        summary.textContent = 'Could not read the users.';
+                    });
+                }
+
+                page.querySelector('#SyncPlayV2AutoplayOff').addEventListener('click', function () {
+                    var button = this;
+                    var userId = page.querySelector('#SyncPlayV2AutoplayUser').value;
+                    if (!userId) {
+                        return;
+                    }
+
+                    // Kept on the page, not a toast: the reload is what makes it work.
+                    var done = page.querySelector('#SyncPlayV2AutoplayDone');
+                    button.disabled = true;
+                    ApiClient.getUser(userId).then(function (user) {
+                        user.Configuration.EnableNextEpisodeAutoPlay = false;
+                        return ApiClient.updateUserConfiguration(user.Id, user.Configuration).then(function () {
+                            return user.Name;
+                        });
+                    }).then(function (name) {
+                        done.textContent = 'Turned off for ' + name + '. It applies once they reload Jellyfin Web or restart the app on each device.';
+                        return loadAutoplay();
+                    }, function () {
+                        Dashboard.alert('Could not change the setting. Check the server log.');
+                    }).then(function () {
+                        button.disabled = false;
+                    });
+                });
+
                 function fail(what) {
                     return function () {
                         Dashboard.hideLoadingMsg();
@@ -372,6 +462,8 @@
                         Dashboard.hideLoadingMsg();
                     }).catch(fail('load'));
                     loadStatus();
+                    page.querySelector('#SyncPlayV2AutoplayDone').textContent = '';
+                    loadAutoplay();
                     visible = true;
                     if (refreshTimer) {
                         clearTimeout(refreshTimer);

@@ -87,6 +87,22 @@ public class MemberDiagnostics
     /// <summary>Gets or sets the client application.</summary>
     public string? Client { get; set; }
 
+    /// <summary>Gets or sets the client application's version.</summary>
+    public string? ClientVersion { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether the member's user has "Play next episode
+    /// automatically" on, which makes Jellyfin Web expand a group's queue.
+    /// Null when the user could not be read.
+    /// </summary>
+    public bool? AutoplayNextEpisode { get; set; }
+
+    /// <summary>
+    /// Gets or sets the member's user, for reading <see cref="AutoplayNextEpisode"/>
+    /// once the group's lock is released. Not in the report.
+    /// </summary>
+    internal Guid UserId { get; set; }
+
     /// <summary>Gets or sets the device name.</summary>
     public string? DeviceName { get; set; }
 
@@ -138,6 +154,9 @@ public class DiagnosticsReport
 
     /// <summary>Gets or sets the plugin version.</summary>
     public string? PluginVersion { get; set; }
+
+    /// <summary>Gets or sets the Jellyfin server version.</summary>
+    public string? ServerVersion { get; set; }
 
     /// <summary>Gets or sets the counts since the server started.</summary>
     public CountersSnapshot Counters { get; set; } = new();

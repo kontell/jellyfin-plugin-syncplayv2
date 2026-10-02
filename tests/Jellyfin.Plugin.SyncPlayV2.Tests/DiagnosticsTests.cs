@@ -1,7 +1,10 @@
 using System;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
+using Jellyfin.Plugin.SyncPlayV2.Diagnostics;
 using Jellyfin.Plugin.SyncPlayV2.Tests.Harness;
+using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.SyncPlay.Requests;
 using MediaBrowser.Model.SyncPlay;
 using Xunit;
@@ -182,4 +185,69 @@ public class DiagnosticsTests
         Assert.Equal(1, counters.Disconnects);
         Assert.Equal(1, counters.Reconnects);
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AMembersClientVersionAndNextEpisodeAutoplayAreReported(bool autoplay)
+    {
+        // With "Play next episode automatically" on, Jellyfin Web expands a
+        // group's queue; the report has to show it to explain a web member
+        // that stops following the group.
+        var harness = new GroupHarness();
+        harness.Join("a");
+        var group = harness.Group.GetDiagnostics();
+
+        MemberUsers.FillAutoplay(new[] { group }, UserDirectory.Create(autoplay));
+
+        var member = group.Members.Single();
+        Assert.Equal("1.2.3", member.ClientVersion);
+        Assert.Equal(autoplay, member.AutoplayNextEpisode);
+    }
+
+    [Fact]
+    public void AnUnknownUsersAutoplayIsReportedAsUnknown()
+    {
+        var harness = new GroupHarness();
+        harness.Join("a");
+        var group = harness.Group.GetDiagnostics();
+
+        MemberUsers.FillAutoplay(new[] { group }, NullService<IUserManager>.Create());
+
+        Assert.Null(group.Members.Single().AutoplayNextEpisode);
+    }
+
+    [Fact]
+    public void AUserThatCannotBeReadLeavesItsAutoplayUnknown()
+    {
+        // The lookup can fail (a database error; an empty id throws): the
+        // report still comes back, with that one flag unknown.
+        var harness = new GroupHarness();
+        harness.Join("a");
+        var group = harness.Group.GetDiagnostics();
+
+        MemberUsers.FillAutoplay(new[] { group }, FailingUsers.Create());
+
+        Assert.Null(group.Members.Single().AutoplayNextEpisode);
+    }
+
+    [Fact]
+    public void TheGroupReadsNoUserUnderItsLock()
+    {
+        // The group's own diagnostics are built under its lock, which play,
+        // seek and ready take too: no user lookup there.
+        var harness = new GroupHarness(FailingUsers.Create());
+        harness.Join("a");
+
+        Assert.Null(harness.Group.GetDiagnostics().Members.Single().AutoplayNextEpisode);
+    }
+}
+
+/// <summary>An IUserManager whose every call fails, as a broken user database would.</summary>
+public class FailingUsers : DispatchProxy
+{
+    public static IUserManager Create() => Create<IUserManager, FailingUsers>();
+
+    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        => throw new InvalidOperationException("user database unavailable");
 }

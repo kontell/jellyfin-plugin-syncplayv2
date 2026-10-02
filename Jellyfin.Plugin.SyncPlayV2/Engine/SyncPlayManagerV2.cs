@@ -399,6 +399,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             {
                 GeneratedAt = DateTime.UtcNow,
                 PluginVersion = typeof(SyncPlayManagerV2).Assembly.GetName().Version?.ToString(),
+                // The running server's own assembly (the plugin ships none), in
+                // the three parts the dashboard and the log show.
+                ServerVersion = typeof(ISessionManager).Assembly.GetName().Version?.ToString(3),
                 Counters = _counters.Snapshot(),
             };
 
@@ -413,6 +416,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     }
                 }
             }
+
+            // Outside the locks: a user lookup can be a database query.
+            MemberUsers.FillAutoplay(report.Groups, _userManager);
 
             return report;
         }

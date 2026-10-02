@@ -42,11 +42,12 @@ internal sealed class GroupHarness
     private readonly ProtocolVersionRegistry _versions = new();
     private readonly ISessionManager _sessionManager = NullService<ISessionManager>.Create();
 
-    public GroupHarness()
+    /// <param name="users">The user directory; by default none, so every user lookup answers null.</param>
+    public GroupHarness(IUserManager? users = null)
     {
         Group = new Group(
             NullLoggerFactory.Instance,
-            NullService<IUserManager>.Create(),
+            users ?? NullService<IUserManager>.Create(),
             _sessionManager,
             NullService<ILibraryManager>.Create(),
             new Sender(NullLogger<Sender>.Instance),
@@ -83,6 +84,7 @@ internal sealed class GroupHarness
             UserName = name,
             DeviceId = name + "-device",
             Client = Client,
+            ApplicationVersion = "1.2.3",
             SessionControllers = new ISessionController[] { controller },
         };
 
@@ -287,4 +289,22 @@ public class NullService<T> : DispatchProxy
 
         return type.IsValueType ? Activator.CreateInstance(type) : null;
     }
+}
+
+/// <summary>An IUserManager whose GetUserById answers a user with next-episode autoplay as given.</summary>
+public class UserDirectory : DispatchProxy
+{
+    private bool _autoplay;
+
+    public static IUserManager Create(bool autoplay)
+    {
+        var proxy = Create<IUserManager, UserDirectory>();
+        ((UserDirectory)(object)proxy)._autoplay = autoplay;
+        return proxy;
+    }
+
+    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        => targetMethod!.Name == "GetUserById"
+            ? new Jellyfin.Database.Implementations.Entities.User("harness-user", "Default", "Default") { EnableNextEpisodeAutoPlay = _autoplay }
+            : null;
 }
