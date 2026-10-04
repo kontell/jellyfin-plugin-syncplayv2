@@ -71,4 +71,57 @@ public class BufferingFlagTests
         Assert.Equal(GroupStateType.Playing, harness.State);
         Assert.True(b.IsListedBuffering);
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void AnEngineIgnoreWaitKeepsASpectatorsNewBuffering(bool disconnects)
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b });
+        b.IgnoreWait(true);
+        a.Seek(0);
+        Assert.True(b.IsListedBuffering);
+
+        if (disconnects)
+        {
+            harness.Group.SetMemberDisconnected(b.Session);
+            harness.Group.HandleRequest(b.Session, new IgnoreWaitGroupRequest(true), CancellationToken.None);
+            harness.Group.ReconnectSession(b.Session, CancellationToken.None);
+        }
+        else
+        {
+            b.TimeOut();
+        }
+
+        Assert.True(b.IsListedBuffering);
+        Assert.True(harness.Group.IsSpectator(b.Session.Id));
+        b.Ready();
+        Assert.False(b.IsListedBuffering);
+        Assert.True(harness.Group.IsSpectator(b.Session.Id));
+        b.IgnoreWait(false);
+        Assert.False(harness.Group.IsSpectator(b.Session.Id));
+    }
+
+    [Fact]
+    public void ARequestToResumeWaitingKeepsTheMembersCurrentBuffering()
+    {
+        var harness = new GroupHarness();
+        var a = harness.Join("a");
+        var b = harness.Join("b");
+        harness.StartPlaying(new[] { a, b });
+        b.IgnoreWait(true);
+        a.Seek(0);
+
+        b.IgnoreWait(false);
+
+        Assert.True(b.IsListedBuffering);
+        Assert.False(harness.Group.IsSpectator(b.Session.Id));
+        a.Ready();
+        Assert.Equal(GroupStateType.Waiting, harness.State);
+        b.Ready();
+        Assert.Equal(GroupStateType.Playing, harness.State);
+    }
 }
