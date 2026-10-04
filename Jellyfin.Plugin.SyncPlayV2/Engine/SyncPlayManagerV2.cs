@@ -318,6 +318,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                         }
 
                         UpdateSessionsCounter(session.UserId, -1);
+
+                        // Fix divergence (VENDORED.md): a Buffer the grace holds back is
+                        // the member's stall in this group; left in the grace, it would
+                        // be applied if the session joined the same group again.
+                        CancelDeferredBuffering(session.Id);
                         group.SessionLeave(session, request, cancellationToken);
 
                         if (group.IsGroupEmpty())
