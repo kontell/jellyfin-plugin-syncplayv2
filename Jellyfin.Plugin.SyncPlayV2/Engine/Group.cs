@@ -1302,10 +1302,17 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <inheritdoc />
         public long GetHighestPing()
         {
-            long max = long.MinValue;
-            foreach (var session in _participants.Values)
+            // Fix divergence (VENDORED.md): only members the group's commands
+            // reach. A disconnected member is sent nothing, and its last ping
+            // would delay everyone's start for its whole grace window. 0 with
+            // nobody connected: the delays built on it are floored at DefaultPing.
+            long max = 0;
+            foreach (var member in _participants.Values)
             {
-                max = Math.Max(max, session.Ping);
+                if (member.IsConnected)
+                {
+                    max = Math.Max(max, member.Ping);
+                }
             }
 
             return max;
