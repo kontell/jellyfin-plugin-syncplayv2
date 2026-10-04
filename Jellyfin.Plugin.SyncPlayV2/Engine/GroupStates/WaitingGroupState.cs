@@ -137,12 +137,17 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 InitialStateSet = true;
             }
 
-            ResumePlaying = true;
-
             var setQueueStatus = context.SetPlayQueue(request.PlayingQueue, request.PlayingItemPosition, request.StartPositionTicks);
             if (!setQueueStatus)
             {
                 _logger.LogError("Unable to set playing queue in group {GroupId}.", context.GroupId.ToString());
+
+                if (prevState.Equals(GroupStateType.Waiting))
+                {
+                    // Fix divergence (VENDORED.md): a request that changes nothing
+                    // leaves a wait in progress as it was.
+                    return;
+                }
 
                 // Ignore request and return to previous state.
                 IGroupState newState = prevState switch {
@@ -154,6 +159,9 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 context.SetState(newState);
                 return;
             }
+
+            // Fix divergence (VENDORED.md): only a queue that was set resumes.
+            ResumePlaying = true;
 
             var playQueueUpdate = context.GetPlayQueueUpdate(PlayQueueUpdateReason.NewPlaylist);
             var update = new SyncPlayPlayQueueUpdate(context.GroupId, playQueueUpdate);
@@ -175,17 +183,24 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 InitialStateSet = true;
             }
 
-            ResumePlaying = true;
-
             var result = context.SetPlayingItem(request.PlaylistItemId);
             if (result)
             {
+                // Fix divergence (VENDORED.md): only a selection that was made resumes.
+                ResumePlaying = true;
+
                 var playQueueUpdate = context.GetPlayQueueUpdate(PlayQueueUpdateReason.SetCurrentItem);
                 var update = new SyncPlayPlayQueueUpdate(context.GroupId, playQueueUpdate);
                 context.SendGroupUpdate(session, SyncPlayBroadcastType.AllGroup, update, cancellationToken);
 
                 // Reset status of sessions and await for all Ready events.
                 context.SetAllBuffering(true);
+            }
+            else if (prevState.Equals(GroupStateType.Waiting))
+            {
+                // Fix divergence (VENDORED.md): a request that changes nothing
+                // leaves a wait in progress as it was.
+                _logger.LogDebug("Unable to change current playing item in group {GroupId}; it keeps waiting.", context.GroupId.ToString());
             }
             else
             {

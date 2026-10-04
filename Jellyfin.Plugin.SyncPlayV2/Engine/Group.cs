@@ -1610,22 +1610,27 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// <inheritdoc />
         public bool SetPlayingItem(Guid playlistItemId)
         {
+            // Fix divergence (VENDORED.md): a selection that names no entry
+            // leaves the group as it was. It is refused before it is tried:
+            // PlayQueueManager clears the playing item when it finds no match,
+            // and the runtime and the position belong to the item still playing.
+            if (!PlayQueue.GetPlaylist().Any(item => item.PlaylistItemId.Equals(playlistItemId)))
+            {
+                return false;
+            }
+
             var itemFound = PlayQueue.SetPlayingItemByPlaylistId(playlistItemId);
-
-            if (itemFound)
+            if (!itemFound)
             {
-                // Fix divergence (VENDORED.md): null-guarded (see HasAccessToQueue).
-                RunTimeTicks = ItemRunTimeTicks(PlayQueue.GetPlayingItemId());
-            }
-            else
-            {
-                RunTimeTicks = 0;
+                return false;
             }
 
+            // Fix divergence (VENDORED.md): null-guarded (see HasAccessToQueue).
+            RunTimeTicks = ItemRunTimeTicks(PlayQueue.GetPlayingItemId());
             RestartCurrentItem();
             BumpStateVersion();
 
-            return itemFound;
+            return true;
         }
 
         /// <inheritdoc />
