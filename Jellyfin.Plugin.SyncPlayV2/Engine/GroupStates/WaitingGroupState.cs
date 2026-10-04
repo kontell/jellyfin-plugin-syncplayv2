@@ -78,8 +78,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 context.PositionTicks += Math.Max(elapsedTime.Ticks, 0);
             }
 
-            // Prepare new session.
-            var playQueueUpdate = context.GetPlayQueueUpdate(PlayQueueUpdateReason.NewPlaylist);
+            // Prepare new session. Fix divergence (VENDORED.md): dated when taken,
+            // so Jellyfin Web applies it whatever queue it saw before.
+            var playQueueUpdate = context is IGroupStateContextV2 joinContext
+                ? joinContext.GetJoinPlayQueueUpdate()
+                : context.GetPlayQueueUpdate(PlayQueueUpdateReason.NewPlaylist);
             var update = new SyncPlayPlayQueueUpdate(context.GroupId, playQueueUpdate);
             context.SendGroupUpdate(session, SyncPlayBroadcastType.CurrentSession, update, cancellationToken);
 

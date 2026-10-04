@@ -1747,13 +1747,44 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
         /// <inheritdoc />
         public PlayQueueUpdate GetPlayQueueUpdate(PlayQueueUpdateReason reason)
+            => BuildPlayQueueUpdate(reason, DateTime.UtcNow, PlayQueue.LastChange);
+
+        /// <inheritdoc />
+        public PlayQueueUpdate GetJoinPlayQueueUpdate()
+        {
+            // One instant for both the position and the date it is given at.
+            var now = DateTime.UtcNow;
+            return BuildPlayQueueUpdate(PlayQueueUpdateReason.NewPlaylist, now, JoinQueueStamp(PlayQueue.LastChange, now));
+        }
+
+        /// <summary>
+        /// Fix divergence (VENDORED.md): the date of the queue sent to a joining
+        /// member. Jellyfin Web ignores a queue dated at or before the last one it
+        /// applied, compared in milliseconds and kept across groups until the
+        /// page reloads, and extrapolates the start position from this date as
+        /// if the group were playing. So the joiner's queue is dated when it is
+        /// taken, a millisecond early so a change within the same millisecond
+        /// still reads as newer, and never before the queue's own date. Left
+        /// as is: a client that leaves and joins again (or switches groups)
+        /// within one millisecond gets the same date twice.
+        /// </summary>
+        /// <param name="lastChange">When the queue last changed.</param>
+        /// <param name="now">When the queue is taken.</param>
+        /// <returns>The date to send.</returns>
+        internal static DateTime JoinQueueStamp(DateTime lastChange, DateTime now)
+        {
+            var taken = new DateTime(now.Ticks - (now.Ticks % TimeSpan.TicksPerMillisecond) - TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
+            return lastChange > taken ? lastChange : taken;
+        }
+
+        private PlayQueueUpdate BuildPlayQueueUpdate(PlayQueueUpdateReason reason, DateTime now, DateTime lastUpdate)
         {
             var startPositionTicks = PositionTicks;
             var isPlaying = _state.Type.Equals(GroupStateType.Playing);
 
             if (isPlaying)
             {
-                var currentTime = DateTime.UtcNow;
+                var currentTime = now;
                 var elapsedTime = currentTime - LastActivity;
                 // Elapsed time is negative if event happens
                 // during the delay added to account for latency.
@@ -1766,7 +1797,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
             return new PlayQueueUpdate(
                 reason,
-                PlayQueue.LastChange,
+                lastUpdate,
                 PlayQueue.GetPlaylist(),
                 PlayQueue.PlayingItemIndex,
                 startPositionTicks,
