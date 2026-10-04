@@ -404,6 +404,38 @@ public sealed class ManagerDiagnosticsTests : IDisposable
         Assert.False(member.IsConnected);
     }
 
+    [Fact]
+    public void ARequestFromASessionThatLeftWhileTheLockWasAwaitedIsDropped()
+    {
+        // The request found the group before its session left, and takes the
+        // group's lock after the leave: the leaver's Pause must not pause the
+        // members still in the group.
+        var (_, b, _) = StartPlaying();
+        var group = _manager.GroupOf(b);
+        _manager.LeaveGroup(b, new LeaveGroupRequest(), CancellationToken.None);
+        Assert.Equal(GroupStateType.Playing, _manager.GetDiagnostics().Groups.Single().State);
+
+        _manager.HandleRequestInGroup(group, b, new PauseGroupRequest(), CancellationToken.None);
+
+        Assert.Equal(GroupStateType.Playing, _manager.GetDiagnostics().Groups.Single().State);
+    }
+
+    [Fact]
+    public void ABufferFromASessionThatLeftDoesNotLeaveTheGroupWaitingForNobody()
+    {
+        // In a paused group the Buffer is not held back: applied for a
+        // non-member, it put the group in Waiting with nobody to wait for.
+        var (a, b, playlistItemId) = StartPlaying();
+        _manager.HandleRequest(a, new PauseGroupRequest(), CancellationToken.None);
+        Assert.Equal(GroupStateType.Paused, _manager.GetDiagnostics().Groups.Single().State);
+        var group = _manager.GroupOf(b);
+        _manager.LeaveGroup(b, new LeaveGroupRequest(), CancellationToken.None);
+
+        _manager.HandleRequestInGroup(group, b, new BufferGroupRequest(DateTime.UtcNow, 0, false, playlistItemId), CancellationToken.None);
+
+        Assert.Equal(GroupStateType.Paused, _manager.GetDiagnostics().Groups.Single().State);
+    }
+
     private void RaiseSessionEnded(SessionInfo session)
         => _manager.OnSessionEnded(_sessionManager, new SessionEventArgs { SessionInfo = session });
 

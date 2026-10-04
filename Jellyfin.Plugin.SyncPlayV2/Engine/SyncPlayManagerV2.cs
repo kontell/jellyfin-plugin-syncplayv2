@@ -556,29 +556,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         {
             if (_sessionToGroupMap.TryGetValue(session.Id, out var group))
             {
-                // Group lock required as Group is not thread-safe.
-                lock (group)
-                {
-                    // Make sure that session still belongs to this group.
-                    if (_sessionToGroupMap.TryGetValue(session.Id, out var checkGroup) && !checkGroup.GroupId.Equals(group.GroupId))
-                    {
-                        // Drop request.
-                        return;
-                    }
-
-                    // Drop request if group is empty.
-                    if (group.IsGroupEmpty())
-                    {
-                        return;
-                    }
-
-                    // Activity proves the member is alive: re-attach it if its session
-                    // was considered disconnected or has been replaced by a new instance.
-                    group.TouchSession(session);
-
-                    // Apply requested changes to group.
-                    group.HandleRequest(session, request, cancellationToken);
-                }
+                HandleRequestInGroup(group, session, request, cancellationToken);
             }
             else
             {
@@ -588,6 +566,54 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 _sessionManager.SendSyncPlayGroupUpdate(session.Id, error, CancellationToken.None);
             }
         }
+
+        /// <summary>
+        /// Applies a request in the group the session was found in, if the
+        /// session is still a member of it once the group's lock is held.
+        /// Fix divergence (VENDORED.md): a session that left while the lock was
+        /// awaited is dropped like one that moved to another group; applied, its
+        /// request acts on the group for a non-member, and a Buffer leaves the
+        /// group waiting for nobody.
+        /// </summary>
+        /// <param name="group">The group the session was found in.</param>
+        /// <param name="session">The session.</param>
+        /// <param name="request">The request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        internal void HandleRequestInGroup(Group group, SessionInfo session, IGroupPlaybackRequest request, CancellationToken cancellationToken)
+        {
+            // Group lock required as Group is not thread-safe.
+            lock (group)
+            {
+                // Make sure that session still belongs to this group.
+                if (!_sessionToGroupMap.TryGetValue(session.Id, out var checkGroup) || !checkGroup.GroupId.Equals(group.GroupId))
+                {
+                    _logger.LogDebug("Session {SessionId} is no longer in group {GroupId}; dropping its {RequestType}.", session.Id, group.GroupId.ToString(), request.Action);
+                    return;
+                }
+
+                // Drop request if group is empty.
+                if (group.IsGroupEmpty())
+                {
+                    return;
+                }
+
+                // Activity proves the member is alive: re-attach it if its session
+                // was considered disconnected or has been replaced by a new instance.
+                group.TouchSession(session);
+
+                // Apply requested changes to group.
+                group.HandleRequest(session, request, cancellationToken);
+            }
+        }
+
+        /// <summary>
+        /// Gets the group a session is in, for tests that hold on to it across a
+        /// leave.
+        /// </summary>
+        /// <param name="session">The session.</param>
+        /// <returns>The group, or null if the session is in none.</returns>
+        internal Group GroupOf(SessionInfo session)
+            => _sessionToGroupMap.TryGetValue(session.Id, out var group) ? group : null;
 
         /// <inheritdoc />
         public bool IsUserActive(Guid userId)
