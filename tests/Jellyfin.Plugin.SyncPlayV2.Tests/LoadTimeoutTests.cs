@@ -148,10 +148,9 @@ public class LoadTimeoutTests
     [Fact]
     public void RemovingThePlayingEntryDoesNotMakeTheNextSeekALoad()
     {
-        // Removing the playing entry moves the queue to the next one without
-        // a group-wide wait, so the load mark it sets was never consumed and
-        // the next wait — a Seek's, deliberately on the stall timeout — got
-        // the load timeout instead.
+        // Removing the playing entry is a load (everyone loads the next one);
+        // a Seek within that wait restarts it as a seek, deliberately on the
+        // stall timeout: the removal's load mark does not reach it.
         var harness = new GroupHarness();
         var a = harness.Join("a");
         var b = harness.Join("b");
