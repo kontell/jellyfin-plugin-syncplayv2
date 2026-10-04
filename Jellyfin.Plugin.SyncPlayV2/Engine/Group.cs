@@ -1109,16 +1109,6 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (_participants.TryGetValue(session.Id, out GroupMember value))
             {
                 value.IgnoreGroupWait = ignoreGroupWait;
-
-                // Fix divergence (VENDORED.md): a member that asks not to be waited
-                // for stops following playback, so a stall it was in is not the
-                // group's; left flagged, it would count again once the member asks
-                // to be waited for. An IgnoreWait the engine synthesizes (wait
-                // timeout, disconnection) keeps it: the member's own report ends it.
-                if (ignoreGroupWait && value.IgnoreGroupWaitByRequest)
-                {
-                    SetMemberBuffering(value, false);
-                }
             }
         }
 
@@ -1143,6 +1133,16 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (_participants.TryGetValue(session.Id, out GroupMember value))
             {
                 value.IgnoreGroupWaitByRequest = byRequest;
+
+                // Fix divergence (VENDORED.md): a member that asks not to be waited
+                // for stops following playback, so a stall it was in is not the
+                // group's; left flagged, it would count again once the member asks
+                // to be waited for. Only this incoming wire attribution clears it;
+                // engine-generated requests must preserve any later buffering.
+                if (byRequest)
+                {
+                    SetMemberBuffering(value, false);
+                }
             }
         }
 
