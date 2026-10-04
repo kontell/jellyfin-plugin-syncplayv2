@@ -122,8 +122,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     _logger.LogDebug("Session {SessionId} left group {GroupId}, returning to previous state.", session.Id, context.GroupId.ToString());
 
                     // Group is ready, returning to previous state.
-                    var pausedState = new PausedGroupState(LoggerFactory);
-                    context.SetState(pausedState);
+                    EndWaitPaused(context, session, cancellationToken);
                 }
             }
         }
@@ -381,6 +380,13 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     // Pause alone stops the players without saying why.
                     SendGroupStateUpdate(context, request, session, cancellationToken);
                 }
+                else if (prevState.Equals(GroupStateType.Paused))
+                {
+                    // As from Playing: the others are told the group waits, and it
+                    // ends paused.
+                    ResumePlaying = false;
+                    SendGroupStateUpdate(context, request, session, cancellationToken);
+                }
 
                 var playQueueUpdate = context.GetPlayQueueUpdate(PlayQueueUpdateReason.SetCurrentItem);
                 var updateSession = new SyncPlayPlayQueueUpdate(context.GroupId, playQueueUpdate);
@@ -612,16 +618,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                     var pausedState = new PausedGroupState(LoggerFactory);
                     context.SetState(pausedState);
 
-                    if (InitialState.Equals(GroupStateType.Playing))
-                    {
-                        // Group went from playing to waiting state and a pause request occurred while waiting.
-                        var pauseRequest = new PauseGroupRequest();
-                        pausedState.HandleRequest(pauseRequest, context, Type, session, cancellationToken);
-                    }
-                    else if (InitialState.Equals(GroupStateType.Paused))
-                    {
-                        pausedState.HandleRequest(request, context, Type, session, cancellationToken);
-                    }
+                    // Fix divergence (VENDORED.md): Paused's Ready handler, whatever the
+                    // state before the wait. It sends everyone the Pause and the Paused
+                    // state and leaves the position the wait has frozen; Paused's Pause
+                    // handler adds the time since LastActivity, which here is the wait.
+                    pausedState.HandleRequest(request, context, Type, session, cancellationToken);
                 }
             }
         }
@@ -827,10 +828,31 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 else
                 {
                     // Group is ready, returning to previous state.
-                    var pausedState = new PausedGroupState(LoggerFactory);
-                    context.SetState(pausedState);
+                    EndWaitPaused(context, session, cancellationToken);
                 }
             }
+        }
+
+        /// <summary>
+        /// Ends the wait in Paused when no Ready ends it (the member waited for
+        /// leaves, or is no longer waited for): everyone is sent the Pause and the
+        /// Paused state with the Ready reason, as Paused's Ready handler sends them
+        /// after a wait. Jellyfin Web clears its wait icon on Paused/Ready, while
+        /// Paused/Pause pops its pause OSD. Fix divergence (VENDORED.md). The
+        /// position stays where the wait froze it.
+        /// </summary>
+        /// <param name="context">The context of the state.</param>
+        /// <param name="session">The session that ended the wait.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        private void EndWaitPaused(IGroupStateContext context, SessionInfo session, CancellationToken cancellationToken)
+        {
+            context.SetState(new PausedGroupState(LoggerFactory));
+
+            var command = context.NewSyncPlayCommand(SendCommandType.Pause);
+            context.SendCommand(session, SyncPlayBroadcastType.AllGroup, command, cancellationToken);
+
+            var stateUpdate = new GroupStateUpdate(GroupStateType.Paused, PlaybackRequestType.Ready);
+            context.SendGroupUpdate(session, SyncPlayBroadcastType.AllGroup, new SyncPlayStateUpdate(context.GroupId, stateUpdate), cancellationToken);
         }
 
         private static SyncPlayBroadcastType ResumeAudience(ReadyGroupRequest request, IGroupStateContext context, SessionInfo session, long memberDelayTicks)
