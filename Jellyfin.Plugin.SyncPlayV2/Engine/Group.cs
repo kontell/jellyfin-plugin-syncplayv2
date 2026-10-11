@@ -647,7 +647,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
 
             // Everything the joiner needs to rendezvous: the complete state,
             // with position-at-time to extrapolate the running playback from.
-            SendWireUpdate(session, "StateSnapshot", GetSnapshot(SeesExternalContent(session.Id)), cancellationToken);
+            SendWireUpdate(session, "StateSnapshot", GetSnapshot(SeesExternalContent(session.Id), member), cancellationToken);
 
             _logger.LogInformation(
                 "Session {SessionId} hot-joining group {GroupId}: playback continues for everyone else.",
@@ -812,7 +812,7 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
             if (member.ProtocolVersion >= 2)
             {
                 // Protocol version 2 clients get the state in a single message.
-                SendWireUpdate(session, "StateSnapshot", GetSnapshot(SeesExternalContent(session.Id)), cancellationToken);
+                SendWireUpdate(session, "StateSnapshot", GetSnapshot(SeesExternalContent(session.Id), member), cancellationToken);
             }
             else
             {
@@ -846,7 +846,14 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         /// </summary>
         /// <param name="withContent">Whether to enrich the queue.</param>
         /// <returns>The snapshot payload.</returns>
-        public WireGroupSnapshot GetSnapshot(bool withContent)
+        public WireGroupSnapshot GetSnapshot(bool withContent) => GetSnapshot(withContent, null);
+
+        /// <summary>
+        /// The complete group state as <paramref name="member"/> is sent it:
+        /// its queue is not dated before the last one the member was sent
+        /// (<see cref="DatedFor"/>).
+        /// </summary>
+        private WireGroupSnapshot GetSnapshot(bool withContent, GroupMember member)
         {
             var now = DateTime.UtcNow;
             var isPlaying = _state.Type.Equals(GroupStateType.Playing);
@@ -858,13 +865,19 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                 positionTicks += Math.Max((now - LastActivity).Ticks, 0);
             }
 
+            var queue = GetPlayQueueUpdate(PlayQueueUpdateReason.NewPlaylist);
+            if (member is not null)
+            {
+                queue = DatedFor(member, queue);
+            }
+
             return new WireGroupSnapshot
             {
                 GroupName = GroupName,
                 State = _state.Type,
                 PlayQueue = withContent && Content.Count > 0
-                    ? Wire.WirePlayQueueUpdate.From(GetPlayQueueUpdate(PlayQueueUpdateReason.NewPlaylist), Content)
-                    : GetPlayQueueUpdate(PlayQueueUpdateReason.NewPlaylist),
+                    ? Wire.WirePlayQueueUpdate.From(queue, Content)
+                    : queue,
                 PositionTicks = positionTicks,
                 When = now,
                 IsPlaying = isPlaying,
@@ -1209,13 +1222,69 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
                     var target = ResolveTarget(sessionId, from);
                     if (target is not null)
                     {
-                        var payload = enriched is not null && SeesExternalContent(sessionId) ? enriched : wire;
+                        var withContent = enriched is not null && SeesExternalContent(sessionId);
+                        var payload = withContent ? enriched : wire;
+
+                        // Fix divergence (VENDORED.md): a member whose last
+                        // queue was dated later than this one is sent it under
+                        // that date.
+                        if (message.Data is PlayQueueUpdate queue
+                            && _participants.TryGetValue(sessionId, out GroupMember member))
+                        {
+                            var dated = DatedFor(member, queue);
+                            if (!ReferenceEquals(dated, queue))
+                            {
+                                payload = new WireGroupUpdate
+                                {
+                                    GroupId = wire.GroupId,
+                                    Type = wire.Type,
+                                    StateVersion = _stateVersion,
+                                    Data = withContent ? Wire.WirePlayQueueUpdate.From(dated, Content) : dated,
+                                };
+                            }
+                        }
+
                         yield return _sender.SendGroupUpdate(target, payload, cancellationToken);
                     }
                 }
             }
 
             return ObserveSendFaults(Task.WhenAll(GetTasks()));
+        }
+
+        /// <summary>
+        /// A queue as <paramref name="member"/> is sent it: never dated before
+        /// the last one it was sent, whose date is recorded here.
+        ///
+        /// Fix divergence (VENDORED.md): a joiner's queue is dated when it is
+        /// taken (<see cref="JoinQueueStamp"/>), later than the queue's own
+        /// date, which every later send of the unchanged queue carries: the
+        /// snapshots, the reconnect resync, and the queue everyone is sent to
+        /// load again when a stopped group is unpaused. A client that drops a
+        /// queue older than the one it applied dropped all of those, and with
+        /// nothing loaded never loaded the item again. Dated as the one it
+        /// has, the queue reads as it did before the join was stamped: applied
+        /// by a client that drops only older queues, ignored by one that also
+        /// drops an equal date (Jellyfin Web). A change to the queue is dated
+        /// after any join before it and keeps its own date.
+        /// </summary>
+        private static PlayQueueUpdate DatedFor(GroupMember member, PlayQueueUpdate update)
+        {
+            if (update.LastUpdate >= member.QueueDate)
+            {
+                member.QueueDate = update.LastUpdate;
+                return update;
+            }
+
+            return new PlayQueueUpdate(
+                update.Reason,
+                member.QueueDate,
+                update.Playlist,
+                update.PlayingItemIndex,
+                update.StartPositionTicks,
+                update.IsPlaying,
+                update.ShuffleMode,
+                update.RepeatMode);
         }
 
         /// <summary>
