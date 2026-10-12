@@ -132,6 +132,14 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine
         }
 
         /// <summary>
+        /// Gets or sets the date of the last queue this member was sent. A
+        /// joiner's queue is dated when it is taken, later than the queue's
+        /// own date (Group.JoinQueueStamp); nothing it is sent afterwards is
+        /// dated before that.
+        /// </summary>
+        public DateTime QueueDate { get; set; }
+
+        /// <summary>
         /// Gets or sets the SyncPlay protocol version the member's client speaks.
         /// Version 2 clients receive state snapshots and position beacons.
         /// </summary>
