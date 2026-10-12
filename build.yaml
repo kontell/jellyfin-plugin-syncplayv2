@@ -14,7 +14,7 @@ guid: "181f9934-bf71-4941-974e-a5f2cdcccc4e"
 # The build number itself lives in the csproj's PluginVersion, which is what
 # tools/package.sh reads; the value here is documentation and is asserted
 # against it at release time.
-version: "10.11.0.8"
+version: "10.11.0.9"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "kontell"
@@ -30,5 +30,6 @@ artifacts:
 # the releases already published; every release up to 10.11.0.6 restated all of
 # its predecessors because this block was only ever added to.
 changelog: |-
-  - More reliable group waits, recovery, reconnects and time sync — thanks @francotosqui
-  - Configurable timeouts and dashboard diagnostics
+  - When the last item in a queue ends, the group no longer reloads it
+  - Many fixes to waits, stale requests, reconnects and time-sync access — thanks @francotosqui
+  - The dashboard shows each group's last 50 events, and which users have next-episode autoplay on
