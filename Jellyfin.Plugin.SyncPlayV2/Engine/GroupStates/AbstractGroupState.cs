@@ -243,6 +243,41 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
             return true;
         }
 
+        /// <summary>
+        /// Whether a Next or Previous for the playing entry has no entry to
+        /// move to (the last one, or the first, of a queue that does not
+        /// repeat), and is to be dropped before the group leaves its state:
+        /// the Waiting handler finds that out too, but only after the group
+        /// has entered Waiting, and it then returns it to the state it was in.
+        /// Nothing is sent for either change, so the StateVersion moves twice
+        /// without a member being told, and a v2 member reads that off the
+        /// next beacon as an update it missed (VENDORED.md).
+        ///
+        /// The rule is PlayQueueManager.Next and Previous's own, which answer
+        /// it only by trying.
+        /// </summary>
+        /// <param name="context">The context of the state.</param>
+        /// <param name="forward">Whether the step is a Next.</param>
+        /// <param name="session">The session that sent it.</param>
+        /// <returns><c>true</c> if the step has nowhere to go.</returns>
+        protected bool IsQueueStepToNowhere(IGroupStateContext context, bool forward, SessionInfo session)
+        {
+            var queue = context.PlayQueue;
+            if (!queue.RepeatMode.Equals(GroupRepeatMode.RepeatNone))
+            {
+                return false;
+            }
+
+            var target = queue.PlayingItemIndex + (forward ? 1 : -1);
+            if (target >= 0 && target < queue.GetPlaylist().Count)
+            {
+                return false;
+            }
+
+            _logger.LogDebug("Session {SessionId} asked group {GroupId} for an item past the end of its queue; ignoring it.", session.Id, context.GroupId.ToString());
+            return true;
+        }
+
         /// <inheritdoc />
         public virtual void HandleRequest(NextItemGroupRequest request, IGroupStateContext context, GroupStateType prevState, SessionInfo session, CancellationToken cancellationToken)
         {

@@ -112,6 +112,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
                 return;
             }
 
+            if (IsQueueStepToNowhere(context, forward: true, session))
+            {
+                return;
+            }
+
             // Change state.
             var waitingState = new WaitingGroupState(LoggerFactory);
             context.SetState(waitingState);
@@ -122,6 +127,11 @@ namespace Jellyfin.Plugin.SyncPlayV2.Engine.GroupStates
         public override void HandleRequest(PreviousItemGroupRequest request, IGroupStateContext context, GroupStateType prevState, SessionInfo session, CancellationToken cancellationToken)
         {
             if (IsStaleQueueStep(context, request.PlaylistItemId, session))
+            {
+                return;
+            }
+
+            if (IsQueueStepToNowhere(context, forward: false, session))
             {
                 return;
             }

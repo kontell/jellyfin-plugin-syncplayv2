@@ -220,6 +220,10 @@ internal sealed class Member
     /// <summary>A PreviousItem for the given entry, as a client with a stale view sends it.</summary>
     public void PreviousItem(Guid playlistItemId) => Send(new PreviousItemGroupRequest(playlistItemId));
 
+    public void PreviousItem() => Send(new PreviousItemGroupRequest(_harness.PlaylistItemId));
+
+    public void Repeat(GroupRepeatMode mode) => Send(new SetRepeatModeGroupRequest(mode));
+
     /// <summary>Removes the group's playing entry from the queue.</summary>
     public void RemovePlayingEntry()
         => Send(new RemoveFromPlaylistGroupRequest(new[] { _harness.PlaylistItemId }, false, false));
